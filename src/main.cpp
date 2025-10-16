@@ -15,11 +15,11 @@ const uint8_t MotorSpeed1 = 128;
 const uint8_t MotorSpeed2 = 128;
  
 // Servo pinout
-const int SERVO_PIN = 2;
+const int SERVO_PIN = 1;   //this pin probably doesn't work!/ doesn't work with PWM
 Servo servo1;
 
 // Distance sensor pinout
-const int ECHO = 1;
+const int ECHO = 2;
 const int TRIG = 3;
  
 // basic setup
@@ -51,7 +51,8 @@ void setup()
   pinMode(TRIG, OUTPUT);
   pinMode(ECHO, INPUT);
 
-  servo1.attach(SERVO_PIN);
+  // Servo initialization
+  //servo1.attach(SERVO_PIN);
 }
 
 int measure_distance() {
@@ -72,20 +73,20 @@ int measure_distance() {
 
 
 void loop() { 
-  //Serial.print(measure_distance());
-  //Serial.println(" cm");
-  //delay(500);
+  Serial.print(measure_distance());
+  Serial.println(" cm");
+  delay(500);
 
-  for(int posDegrees = 0; posDegrees <= 180; posDegrees++) {
-        servo1.write(posDegrees);
-        Serial.println(posDegrees);
-        delay(20);
-    }
+  // for(int posDegrees = 0; posDegrees <= 180; posDegrees++) {
+  //       servo1.write(posDegrees);
+  //       Serial.println(posDegrees);
+  //       delay(20);
+  //   }
 
-    for(int posDegrees = 180; posDegrees >= 0; posDegrees--) {
-        servo1.write(posDegrees);
-        Serial.println(posDegrees);
-        delay(20);
-    }
+  //   for(int posDegrees = 180; posDegrees >= 0; posDegrees--) {
+  //       servo1.write(posDegrees);
+  //       Serial.println(posDegrees);
+  //       delay(20);
+  //   }
   
 }

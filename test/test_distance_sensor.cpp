@@ -1,5 +1,3 @@
-// MOVE TO THE PROPPER LOCATION
-
 // Motor & Distance sensor test  
 #include <Wire.h>
 #include <Arduino.h>
