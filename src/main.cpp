@@ -8,14 +8,14 @@ const int pwmA = 9, in1A = 8, in2A = 7;
 const int pwmB = 6, in1B = 5, in2B = 4;
 
 const int freq = 20000;          // 20kHz
-const int res = 8;               // 0..255
+const int res = 8;               // 8-bit resolution (0..255)
 
 // Motor Speed Values - const
 const uint8_t MotorSpeed1 = 128;
 const uint8_t MotorSpeed2 = 128;
  
 // Servo pinout
-const int SERVO_PIN = 1;   //this pin probably doesn't work!/ doesn't work with PWM
+const int SERVO_PIN = 1;   
 Servo servo1;
 
 // Distance sensor pinout
@@ -28,10 +28,10 @@ void setup()
   pinMode(in1A, OUTPUT), pinMode(in2A, OUTPUT);
   pinMode(in1B, OUTPUT), pinMode(in2B, OUTPUT);
 
-  ledcSetup(0, freq, res); // Channel 0 for Motor A
-  ledcSetup(1, freq, res); // Channel 1 for Motor B
-  ledcAttachPin(pwmA, 0);  // Attach Motor A PWM pin to channel 0
-  ledcAttachPin(pwmB, 1);  // Attach Motor B PWM pin to channel 1
+  ledcSetup(4, freq, res); // Channel 4 for Motor A
+  ledcSetup(5, freq, res); // Channel 5 for Motor B
+  ledcAttachPin(pwmA, 4);  // Attach Motor A PWM pin to channel 4
+  ledcAttachPin(pwmB, 5);  // Attach Motor B PWM pin to channel 5
 
   // Motor A forward
   digitalWrite(in1A, LOW);  
@@ -41,8 +41,8 @@ void setup()
   digitalWrite(in1B, LOW);
   digitalWrite(in2B, HIGH);
   
-  ledcWrite(0, MotorSpeed1); // Write speed to channel 0 (Motor A)
-  ledcWrite(1, MotorSpeed2); // Write speed to channel 1 (Motor B)
+  ledcWrite(4, MotorSpeed1); // Write speed to channel 4 (Motor A)
+  ledcWrite(5, MotorSpeed2); // Write speed to channel 5 (Motor B)
   ledcWrite(pwmA, MotorSpeed1);
   ledcWrite(pwmB, MotorSpeed2);
   
@@ -51,8 +51,8 @@ void setup()
   pinMode(TRIG, OUTPUT);
   pinMode(ECHO, INPUT);
 
-  // Servo initialization
-  //servo1.attach(SERVO_PIN);
+  // Servo initialization - do not overwrite timers before motors configuration
+  servo1.attach(SERVO_PIN);
 }
 
 int measure_distance() {
@@ -77,16 +77,16 @@ void loop() {
   Serial.println(" cm");
   delay(500);
 
-  // for(int posDegrees = 0; posDegrees <= 180; posDegrees++) {
-  //       servo1.write(posDegrees);
-  //       Serial.println(posDegrees);
-  //       delay(20);
-  //   }
+  for(int posDegrees = 0; posDegrees <= 180; posDegrees++) {
+        servo1.write(posDegrees);
+        Serial.println(posDegrees);
+        delay(20);
+    }
 
-  //   for(int posDegrees = 180; posDegrees >= 0; posDegrees--) {
-  //       servo1.write(posDegrees);
-  //       Serial.println(posDegrees);
-  //       delay(20);
-  //   }
+    for(int posDegrees = 180; posDegrees >= 0; posDegrees--) {
+        servo1.write(posDegrees);
+        Serial.println(posDegrees);
+        delay(20);
+    }
   
 }
