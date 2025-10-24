@@ -18,7 +18,7 @@ const uint8_t MotorSpeed2 = 128;
 const int SERVO_PIN = 1;   
 Servo servo1;
 
-// Distance sensor pinout
+// Distance sensor pinout - HC-SR04
 const int ECHO = 2;
 const int TRIG = 3;
  

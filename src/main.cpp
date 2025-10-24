@@ -1,6 +1,7 @@
-// Distance sensor
+// Distance sensor and IMU
 #define sensor_t adafruit_sensor_t   // przekieruj typedef z Adafruit (taka sama nazwa jak w bibliotece esp32_camera_)
 #include <Adafruit_VL53L0X.h>
+#include <Adafruit_MPU6050.h>
 //#include <Adafruit_Sensor.h>
 #undef sensor_t                      // przywróć nazwę dla kamery, bo problem kolizyjny zostal zazegnany
 
@@ -44,12 +45,23 @@ Servo servo1;
  // I2C sensors pinout
 const int SDA_PIN = 5;
 const int SCL_PIN = 6;
-const int MPU_addr = 0x68; // AD0=LOW
-const int VL53L0K_addr = 0x29;
 
-// VL53 - global obejct and params
+// ===============================================
+// Distance sensor VL53 - global obejct and params
+// ===============================================
+const int VL53L0K_addr = 0x29;
 Adafruit_VL53L0X lox;
-static const uint32_t VL53LL0K_PERIOD_MS = 100;
+static const uint32_t VL53LL0K_PERIOD_MS = 100;  //10Hz
+
+// ===============================================
+// IMU - MPU6050 
+// ===============================================
+const int MPU_addr = 0x68; // AD0=LOW
+Adafruit_MPU6050 mpu;
+static const uint32_t MPU_PERIOD_MS = 100;  //10Hz
+static const float RAD2DEG = 57.2957795f; 
+static const float ONE_G = 9.80665f;
+bool mpu_ok = false;
 
 // Camera declaration
 void startCameraServer();
@@ -74,8 +86,6 @@ void setup() {
   
   ledcWrite(4, MotorSpeed1); // Write speed to channel 4 (Motor A)
   ledcWrite(5, MotorSpeed2); // Write speed to channel 5 (Motor B)
-  ledcWrite(pwmA, MotorSpeed1);  // USUNAC CZY ZOSTAWIC??
-  ledcWrite(pwmB, MotorSpeed2);  // USUNAC CZY ZOSTAWIC??
 
   Serial.begin(115200);
   Serial.setDebugOutput(true);
@@ -85,18 +95,33 @@ void setup() {
   servo1.attach(SERVO_PIN);
   servo1.writeMicroseconds(STOP_US + SPEED_US);
 
-  // I2C sensors initialization
+  // I2C sensors initialization (GPIO5/6, camera has own SCCB on 39/40)
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(100000UL);   // 100 kHz for stability
   delay(100);
 
 
+  // --- VL53L0X ---
   if (!lox.begin(VL53L0K_addr, false, &Wire)) {
     Serial.println(F("BLAD: VL53L0X doesn't response at 0x29 address."));
   } else {
     Serial.println(F("OK: VL53L0X is ready (mm)."));
   }
 
+
+  // --- MPU6050 ---
+  mpu_ok = mpu.begin(0x68, &Wire);
+  if (!mpu_ok) {
+    mpu_ok = mpu.begin(0x69, &Wire);
+  }
+  if (!mpu_ok) {
+    Serial.println(F("BLAD: MPU6050 nie odpowiada (0x68/0x69)."));
+  } else {
+    mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
+    mpu.setGyroRange(MPU6050_RANGE_250_DEG);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    Serial.println(F("OK: MPU6050 gotowy (akcelerometr + zyroskop)."));
+  }
   
 
   camera_config_t config;
@@ -120,7 +145,7 @@ void setup() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.frame_size = FRAMESIZE_UXGA;
-  config.pixel_format = PIXFORMAT_JPEG;  // for streaming
+  config.pixel_format = PIXFORMAT_JPEG;     // for streaming
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -207,7 +232,8 @@ void setup() {
 
 
 void loop() {
-  
+
+  // Measured distance
   static uint32_t t0 = 0;
   uint32_t now = millis();
   if (now - t0 >= VL53LL0K_PERIOD_MS) {   // ma oznaczac ~10 Hz   idk czy VL53LL0K_PERIOD_MS sie do tych hz odnosi, ale bylo 100
@@ -225,7 +251,41 @@ void loop() {
     }
   }
 
-  // Measured distance
+// ZLE JEST CHYBA USTAWIONE PRZYSPIESZENIE I NIE MA DOKALDNEGO POMIARU JAK NIC SIE NIE DZIEJE POIWNNO BYC IMO 0 0 1 
+// [MPU] Acc[g]: 0.044 -0.041 1.185  |  Gyr[deg/s]: 8.5 -3.1 0.2
+// [VL53] 60 mm
+// [MPU] Acc[g]: 0.042 -0.043 1.187  |  Gyr[deg/s]: 8.5 -3.2 0.3
+// [VL53] 58 mm
+// [MPU] Acc[g]: 0.043 -0.043 1.186  |  Gyr[deg/s]: 8.5 -3.1 0.2
+
+
+  // IMU Measured odometry
+  static uint32_t t_mpu = 0;
+  if (mpu_ok && (now - t_mpu >= MPU_PERIOD_MS)) {
+    t_mpu = now;
+
+    sensors_event_t a, g, t;
+    mpu.getEvent(&a, &g, &t);
+
+    float ax_g = a.acceleration.x / ONE_G;
+    float ay_g = a.acceleration.y / ONE_G;
+    float az_g = a.acceleration.z / ONE_G;
+
+    float gx_dps = g.gyro.x * RAD2DEG;
+    float gy_dps = g.gyro.y * RAD2DEG;
+    float gz_dps = g.gyro.z * RAD2DEG;
+
+    Serial.print(F("[MPU] Acc[g]: "));
+    Serial.print(ax_g, 3); Serial.print(' ');
+    Serial.print(ay_g, 3); Serial.print(' ');
+    Serial.print(az_g, 3);
+
+    Serial.print(F("  |  Gyr[deg/s]: "));
+    Serial.print(gx_dps, 1); Serial.print(' ');
+    Serial.print(gy_dps, 1); Serial.print(' ');
+    Serial.print(gz_dps, 1);
+    Serial.println();
+  }
 
   // Looped servo movement is executed in setup
 

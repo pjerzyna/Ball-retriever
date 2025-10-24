@@ -1,8 +1,17 @@
+// Distance sensor
+#define sensor_t adafruit_sensor_t   // przekieruj typedef z Adafruit (taka sama nazwa jak w bibliotece esp32_camera_)
+#include <Adafruit_VL53L0X.h>
+//#include <Adafruit_Sensor.h>
+#undef sensor_t                      // przywróć nazwę dla kamery, bo problem kolizyjny zostal zazegnany
+
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <Wire.h>
 #include <Arduino.h>
 #include <Servo.h>
+
+
+
 
 // ===========================
 // Select camera model in board_config.h
@@ -17,7 +26,7 @@ const char *password = "essa1234";
 
 // Motor A & Motor B (watch out with RX/TX pins! - do not override them)
 const int pwmA = 9, in1A = 8, in2A = 7;
-const int pwmB = 6, in1B = 5, in2B = 4;
+const int pwmB = 4, in1B = 3, in2B = 2;
 
 const int freq = 20000;          // 20kHz
 const int res = 8;               // 8-bit resolution (0..255)
@@ -27,14 +36,22 @@ const uint8_t MotorSpeed1 = 128;
 const uint8_t MotorSpeed2 = 128;
  
 // Servo pinout
-const int SERVO_PIN = 1;   
+const int SERVO_PIN = 1; 
+const int STOP_US = 1500;
+const int SPEED_US = 200;  
 Servo servo1;
 
-// Distance sensor pinout - HC-SR04
-const int ECHO = 2;
-const int TRIG = 3;
- 
+ // I2C sensors pinout
+const int SDA_PIN = 5;
+const int SCL_PIN = 6;
+const int MPU_addr = 0x68; // AD0=LOW
+const int VL53L0K_addr = 0x29;
 
+// Distance sensor VL53 - global obejct and params
+Adafruit_VL53L0X lox;
+static const uint32_t VL53LL0K_PERIOD_MS = 100;
+
+// Camera declaration
 void startCameraServer();
 void setupLedFlash();
 
@@ -57,17 +74,30 @@ void setup() {
   
   ledcWrite(4, MotorSpeed1); // Write speed to channel 4 (Motor A)
   ledcWrite(5, MotorSpeed2); // Write speed to channel 5 (Motor B)
-  ledcWrite(pwmA, MotorSpeed1);
-  ledcWrite(pwmB, MotorSpeed2);
+  ledcWrite(pwmA, MotorSpeed1);  // USUNAC CZY ZOSTAWIC??
+  ledcWrite(pwmB, MotorSpeed2);  // USUNAC CZY ZOSTAWIC??
 
   Serial.begin(115200);
-  pinMode(TRIG, OUTPUT);
-  pinMode(ECHO, INPUT);
-  // Servo initialization - do not overwrite timers before motors configuration
-  servo1.attach(SERVO_PIN);
-
   Serial.setDebugOutput(true);
   Serial.println();
+
+  // Servo initialization - do not overwrite timers before motors configuration
+  servo1.attach(SERVO_PIN);
+  servo1.writeMicroseconds(STOP_US + SPEED_US);
+
+  // I2C sensors initialization
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000UL);   // 100 kHz for stability
+  delay(100);
+
+
+  if (!lox.begin(VL53L0K_addr, false, &Wire)) {
+    Serial.println(F("BLAD: VL53L0X doesn't response at 0x29 address."));
+  } else {
+    Serial.println(F("OK: VL53L0X is ready (mm)."));
+  }
+
+  
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -90,7 +120,7 @@ void setup() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.frame_size = FRAMESIZE_UXGA;
-  config.pixel_format = PIXFORMAT_JPEG;  // for streaming !!!!!!!!!!!!!!!!
+  config.pixel_format = PIXFORMAT_JPEG;  // for streaming
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -173,42 +203,31 @@ void setup() {
   Serial.println("' to connect");
 }
 
-int measure_distance() {
-  long duration, distance;
 
-  // trigger mechanism
-  digitalWrite(TRIG, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG, LOW);
 
-  duration = pulseIn(ECHO, HIGH);
-  distance = duration / 58;
-
-  return distance;
-}
 
 void loop() {
+  
+  static uint32_t t0 = 0;
+  uint32_t now = millis();
+  if (now - t0 >= VL53LL0K_PERIOD_MS) {   // ma oznaczac ~10 Hz   idk czy VL53LL0K_PERIOD_MS sie do tych hz odnosi, ale bylo 100
+    t0 = now;
+
+    VL53L0X_RangingMeasurementData_t m;
+    lox.rangingTest(&m, false); // false = bez debugów z biblioteki
+
+    if (m.RangeStatus != 4 && m.RangeMilliMeter > 0) {
+      Serial.print(F("[VL53] "));
+      Serial.print(m.RangeMilliMeter);
+      Serial.println(F(" mm"));
+    } else {
+      Serial.println(F("[VL53] poza zakresem / błąd"));
+    }
+  }
 
   // Measured distance
-  Serial.print(measure_distance());
-  Serial.println(" cm");
-  delay(500);
 
-  // Looped servo movement
-  for(int posDegrees = 0; posDegrees <= 180; posDegrees++) {
-        servo1.write(posDegrees);
-        Serial.println(posDegrees);
-        delay(20);
-    }
-
-    for(int posDegrees = 180; posDegrees >= 0; posDegrees--) {
-        servo1.write(posDegrees);
-        Serial.println(posDegrees);
-        delay(20);
-    }
-  
+  // Looped servo movement is executed in setup
 
   // Web server is executed in setup
 
