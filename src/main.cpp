@@ -1,10 +1,7 @@
-// Distance sensor and IMU
-#define sensor_t adafruit_sensor_t   // przekieruj typedef z Adafruit (taka sama nazwa jak w bibliotece esp32_camera_)
+#define sensor_t adafruit_sensor_t   // redirect typedef from Adafruit (same name as in esp32_camera)
 #include <Adafruit_VL53L0X.h>
 #include <Adafruit_MPU6050.h>
-//#include <Adafruit_Sensor.h>
-#undef sensor_t                      // przywróć nazwę dla kamery, bo problem kolizyjny zostal zazegnany
-
+#undef sensor_t                      // camera name returned, collision problem solved
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <Wire.h>
@@ -15,39 +12,46 @@
 
 
 // ===========================
-// Select camera model in board_config.h
+// Camera model from board_config.h
 // ===========================
 #include "board_config.h"
 
 // ===========================
-// Enter your WiFi credentials
+// WiFi
 // ===========================
 const char *ssid = "pawagawa";
 const char *password = "essa1234";
 
-// Motor A & Motor B (watch out with RX/TX pins! - do not override them)
+// ===========================
+// Motors
+// ===========================
 const int pwmA = 9, in1A = 8, in2A = 7;
 const int pwmB = 4, in1B = 3, in2B = 2;
 
 const int freq = 20000;          // 20kHz
 const int res = 8;               // 8-bit resolution (0..255)
 
-// Motor Speed Values - const
+
+// CONSTANT SPEED VALUE for prototyping
 const uint8_t MotorSpeed1 = 128;
 const uint8_t MotorSpeed2 = 128;
  
+// ===========================
 // Servo pinout
+// ===========================
 const int SERVO_PIN = 1; 
 const int STOP_US = 1500;
 const int SPEED_US = 200;  
 Servo servo1;
 
- // I2C sensors pinout
+// ===========================
+// I2C - GPIO5=SDA, GPIO6=SCL
+// ===========================
 const int SDA_PIN = 5;
 const int SCL_PIN = 6;
 
 // ===============================================
-// Distance sensor VL53 - global obejct and params
+// Distance sensor - VL53L0K 
 // ===============================================
 const int VL53L0K_addr = 0x29;
 Adafruit_VL53L0X lox;
@@ -58,16 +62,56 @@ static const uint32_t VL53LL0K_PERIOD_MS = 100;  //10Hz
 // ===============================================
 const int MPU_addr = 0x68; // AD0=LOW
 Adafruit_MPU6050 mpu;
-static const uint32_t MPU_PERIOD_MS = 100;  //10Hz
-static const float RAD2DEG = 57.2957795f; 
+static const uint32_t MPU_PERIOD_MS = 100;  // 10Hz
+static const float RAD2DEG = 57.2957795f;   // 180/pi
 static const float ONE_G = 9.80665f;
 bool mpu_ok = false;
 
-// Camera declaration
+// ===============================================
+// Encoder sensors (slot-type optical interrupter, LM393 comparator)
+// ===============================================
+// Each sensor outputs a digital pulse when the slot is interrupted.
+// GPIO43/44 are TX/RX UART0, but with USB-CDC usage, they are free.
+static const uint8_t PIN_ENC_L = 44;  // left wheel
+static const uint8_t PIN_ENC_R = 43;  // right wheel
+
+static const bool ENC_USE_PULLUP = false;           // LM393 has its own pull-up
+static const unsigned long ENC_REPORT_MS = 500;     // 2Hz
+static const float PULSES_PER_REV_L = 20.0f;        // Left shield pulses/rotation !(TO ADJUST)!
+static const float PULSES_PER_REV_R = 20.0f;        // Right shield pulses/rotation !(TO ADJUST)!
+static const unsigned long ENC_MIN_PULSE_US = 200;  // time filter (anti-vibration)
+
+// counters shared with ISR – active falling edge (LM393 = active LOW)
+volatile uint32_t encL_count = 0, encR_count = 0;
+volatile uint32_t encL_last_us = 0, encR_last_us = 0;
+
+// Left Interrupt Service Routine
+void IRAM_ATTR encLISR() {
+  uint32_t now = micros();
+  if (now - encL_last_us >= ENC_MIN_PULSE_US) {
+    encL_count++;
+    encL_last_us = now;
+  }
+}
+
+// Right Interrupt Service Routine
+void IRAM_ATTR encRISR() {
+  uint32_t now = micros();
+  if (now - encR_last_us >= ENC_MIN_PULSE_US) {
+    encR_count++;
+    encR_last_us = now;
+  }
+}
+
+// ===============================================
+// Camera 
+// ===============================================
 void startCameraServer();
 void setupLedFlash();
 
 void setup() {
+
+  // --- Motors + PWM on particular channels
   pinMode(in1A, OUTPUT), pinMode(in2A, OUTPUT);
   pinMode(in1B, OUTPUT), pinMode(in2B, OUTPUT);
 
@@ -87,21 +131,22 @@ void setup() {
   ledcWrite(4, MotorSpeed1); // Write speed to channel 4 (Motor A)
   ledcWrite(5, MotorSpeed2); // Write speed to channel 5 (Motor B)
 
+  // --- Serial ---
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
 
-  // Servo initialization - do not overwrite timers before motors configuration
+  // --- Servo, do not overwrite timers before motors configuration ---
   servo1.attach(SERVO_PIN);
   servo1.writeMicroseconds(STOP_US + SPEED_US);
 
-  // I2C sensors initialization (GPIO5/6, camera has own SCCB on 39/40)
+  // --- I2C sensors initialization on GPIO5/6 (Camera has its own SCCB on 39/40) ---
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(100000UL);   // 100 kHz for stability
   delay(100);
 
 
-  // --- VL53L0X ---
+  // --- VL53L0X (I2C) ---
   if (!lox.begin(VL53L0K_addr, false, &Wire)) {
     Serial.println(F("BLAD: VL53L0X doesn't response at 0x29 address."));
   } else {
@@ -109,7 +154,7 @@ void setup() {
   }
 
 
-  // --- MPU6050 ---
+  // --- MPU6050 (I2C) ---
   mpu_ok = mpu.begin(0x68, &Wire);
   if (!mpu_ok) {
     mpu_ok = mpu.begin(0x69, &Wire);
@@ -122,8 +167,15 @@ void setup() {
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
     Serial.println(F("OK: MPU6050 gotowy (akcelerometr + zyroskop)."));
   }
-  
 
+  // --- slot-type detector, input and interrupt configuration ---
+  //  when is active = LOW --> count falling edge
+  pinMode(PIN_ENC_L, ENC_USE_PULLUP ? INPUT_PULLUP : INPUT);
+  pinMode(PIN_ENC_R, ENC_USE_PULLUP ? INPUT_PULLUP : INPUT);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENC_L), encLISR, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENC_R), encRISR, FALLING);
+  
+  // --- Camera ---
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -139,14 +191,16 @@ void setup() {
   config.pin_pclk = PCLK_GPIO_NUM;
   config.pin_vsync = VSYNC_GPIO_NUM;
   config.pin_href = HREF_GPIO_NUM;
-  config.pin_sccb_sda = SIOD_GPIO_NUM;
-  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM;      
+  config.pin_sccb_scl = SIOC_GPIO_NUM;      
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.frame_size = FRAMESIZE_UXGA;
+
   config.pixel_format = PIXFORMAT_JPEG;     // for streaming
   //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
+
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 12;
@@ -208,8 +262,9 @@ void setup() {
 // Setup LED FLash if LED pin is defined in camera_pins.h
 #if defined(LED_GPIO_NUM)
   setupLedFlash();
-#endif
+#endif  
 
+  // --- WiFi + camera server ---
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
 
@@ -223,6 +278,7 @@ void setup() {
 
   startCameraServer();
 
+  // http://172.20.10.2:80/stream
   Serial.print("Camera Ready! Use 'http://");
   Serial.print(WiFi.localIP());
   Serial.println("' to connect");
@@ -233,33 +289,27 @@ void setup() {
 
 void loop() {
 
-  // Measured distance
+
+  // --- VL53L0KL: ~100ms ---
   static uint32_t t0 = 0;
   uint32_t now = millis();
-  if (now - t0 >= VL53LL0K_PERIOD_MS) {   // ma oznaczac ~10 Hz   idk czy VL53LL0K_PERIOD_MS sie do tych hz odnosi, ale bylo 100
+  if (now - t0 >= VL53LL0K_PERIOD_MS) {   // 100ms = 10Hz  
     t0 = now;
 
     VL53L0X_RangingMeasurementData_t m;
-    lox.rangingTest(&m, false); // false = bez debugów z biblioteki
+    lox.rangingTest(&m, false); // false = without library debugs
 
     if (m.RangeStatus != 4 && m.RangeMilliMeter > 0) {
-      Serial.print(F("[VL53] "));
-      Serial.print(m.RangeMilliMeter);
+     Serial.print(F("[VL53] "));
+     Serial.print(m.RangeMilliMeter);
       Serial.println(F(" mm"));
     } else {
       Serial.println(F("[VL53] poza zakresem / błąd"));
     }
   }
 
-// ZLE JEST CHYBA USTAWIONE PRZYSPIESZENIE I NIE MA DOKALDNEGO POMIARU JAK NIC SIE NIE DZIEJE POIWNNO BYC IMO 0 0 1 
-// [MPU] Acc[g]: 0.044 -0.041 1.185  |  Gyr[deg/s]: 8.5 -3.1 0.2
-// [VL53] 60 mm
-// [MPU] Acc[g]: 0.042 -0.043 1.187  |  Gyr[deg/s]: 8.5 -3.2 0.3
-// [VL53] 58 mm
-// [MPU] Acc[g]: 0.043 -0.043 1.186  |  Gyr[deg/s]: 8.5 -3.1 0.2
 
-
-  // IMU Measured odometry
+  // --- MPU6050: ~100ms ---
   static uint32_t t_mpu = 0;
   if (mpu_ok && (now - t_mpu >= MPU_PERIOD_MS)) {
     t_mpu = now;
@@ -287,8 +337,38 @@ void loop() {
     Serial.println();
   }
 
-  // Looped servo movement is executed in setup
 
-  // Web server is executed in setup
+  // --- Enkodery: ~500ms ---
+  static uint32_t enc_t0 = millis();
+  uint32_t now_ms = millis();
+  if (now_ms - enc_t0 >= ENC_REPORT_MS) {
+    float dt = (now_ms - enc_t0) / 1000.0f;
+    enc_t0 = now_ms;
+
+    // Atomic read and reset of encoder counters
+    // Uninterruptible process prevents ISR interference
+    noInterrupts();
+    uint32_t pL = encL_count; encL_count = 0;
+    uint32_t pR = encR_count; encR_count = 0;
+    interrupts();
+
+    float hzL  = (dt > 0.0f) ? (pL / dt) : 0.0f;
+    float hzR  = (dt > 0.0f) ? (pR / dt) : 0.0f;
+    float rpmL = (PULSES_PER_REV_L > 0.0f) ? (hzL * 60.0f / PULSES_PER_REV_L) : 0.0f;
+    float rpmR = (PULSES_PER_REV_R > 0.0f) ? (hzR * 60.0f / PULSES_PER_REV_R) : 0.0f;
+
+    Serial.print(F("[ENC] L: imp=")); Serial.print(pL);
+    Serial.print(F(" Hz="));         Serial.print(hzL, 2);
+    Serial.print(F(" RPM="));        Serial.print(rpmL, 1);
+    Serial.print(F(" | R: imp="));   Serial.print(pR);
+    Serial.print(F(" Hz="));         Serial.print(hzR, 2);
+    Serial.print(F(" RPM="));        Serial.println(rpmR, 1);
+  }
+
+  // --- Looped servo movement is executed in setup ---
+
+
+  // --- Web server is executed in setup ---
+
 
 }
