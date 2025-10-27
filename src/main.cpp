@@ -66,6 +66,10 @@ static const uint32_t MPU_PERIOD_MS = 100;  // 10Hz
 static const float RAD2DEG = 57.2957795f;   // 180/pi
 static const float ONE_G = 9.80665f;
 bool mpu_ok = false;
+float acc_bias_g[3]  = {0,0,0};
+float gyro_bias_dps[3] = {0,0,0};
+
+
 
 // ===============================================
 // Encoder sensors (slot-type optical interrupter, LM393 comparator)
@@ -109,6 +113,60 @@ void IRAM_ATTR encRISR() {
 void startCameraServer();
 void setupLedFlash();
 
+void calibrateIMU(unsigned samples = 500, unsigned settle_ms = 500) {
+  // some time to calm down robot
+  delay(settle_ms);
+
+  double sum_ax=0, sum_ay=0, sum_az=0;
+  double sum_gx=0, sum_gy=0, sum_gz=0;
+
+  for (unsigned i=0; i<samples; ++i) {
+    sensors_event_t a, g, t;
+    mpu.getEvent(&a, &g, &t);
+
+    // a.acceleration in m/s^2 --> na g
+    double ax_g = a.acceleration.x / ONE_G;
+    double ay_g = a.acceleration.y / ONE_G;
+    double az_g = a.acceleration.z / ONE_G;
+
+    // g.gyro in rad/s --> na deg/s
+    double gx_dps = g.gyro.x * RAD2DEG;
+    double gy_dps = g.gyro.y * RAD2DEG;
+    double gz_dps = g.gyro.z * RAD2DEG;
+
+    sum_ax += ax_g; sum_ay += ay_g; sum_az += az_g;
+    sum_gx += gx_dps; sum_gy += gy_dps; sum_gz += gz_dps;
+
+    delay(2); // 500*2ms = 1s of sampling
+  }
+
+  // Means
+  double mean_ax = sum_ax / samples;
+  double mean_ay = sum_ay / samples;
+  double mean_az = sum_az / samples;
+
+  double mean_gx = sum_gx / samples;
+  double mean_gy = sum_gy / samples;
+  double mean_gz = sum_gz / samples;
+
+  // Biases:
+  // - Accelerometer: (0,0,1) is desired
+  acc_bias_g[0] = (float)mean_ax;         
+  acc_bias_g[1] = (float)mean_ay;         
+  acc_bias_g[2] = (float)(mean_az - 1.0); 
+
+  // - Gyroscope: (0,0,0) deg/s is desired
+  gyro_bias_dps[0] = (float)mean_gx;
+  gyro_bias_dps[1] = (float)mean_gy;
+  gyro_bias_dps[2] = (float)mean_gz;
+
+  Serial.println(F("IMU calibrated."));
+  Serial.print(F("acc_bias_g = "));  Serial.print(acc_bias_g[0],3); Serial.print(" ");
+  Serial.print(acc_bias_g[1],3); Serial.print(" "); Serial.println(acc_bias_g[2],3);
+  Serial.print(F("gyro_bias_dps = ")); Serial.print(gyro_bias_dps[0],2); Serial.print(" ");
+  Serial.print(gyro_bias_dps[1],2); Serial.print(" "); Serial.println(gyro_bias_dps[2],2);
+}
+
 void setup() {
 
   // --- Motors + PWM on particular channels
@@ -148,7 +206,7 @@ void setup() {
 
   // --- VL53L0X (I2C) ---
   if (!lox.begin(VL53L0K_addr, false, &Wire)) {
-    Serial.println(F("BLAD: VL53L0X doesn't response at 0x29 address."));
+    Serial.println(F("ERROR: VL53L0X doesn't response at 0x29 address."));
   } else {
     Serial.println(F("OK: VL53L0X is ready (mm)."));
   }
@@ -160,12 +218,13 @@ void setup() {
     mpu_ok = mpu.begin(0x69, &Wire);
   }
   if (!mpu_ok) {
-    Serial.println(F("BLAD: MPU6050 nie odpowiada (0x68/0x69)."));
+    Serial.println(F("ERROR: MPU6050 doesn't response (0x68/0x69)."));
   } else {
     mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
     mpu.setGyroRange(MPU6050_RANGE_250_DEG);
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-    Serial.println(F("OK: MPU6050 gotowy (akcelerometr + zyroskop)."));
+    calibrateIMU(600, 600); // 500 samples, 500 ms are default values
+    Serial.println(F("OK: MPU6050 is ready (accelerometer + gyroscope)."));
   }
 
   // --- slot-type detector, input and interrupt configuration ---
@@ -286,7 +345,6 @@ void setup() {
 
 
 
-
 void loop() {
 
 
@@ -317,20 +375,22 @@ void loop() {
     sensors_event_t a, g, t;
     mpu.getEvent(&a, &g, &t);
 
-    float ax_g = a.acceleration.x / ONE_G;
-    float ay_g = a.acceleration.y / ONE_G;
-    float az_g = a.acceleration.z / ONE_G;
+    float ax_g = a.acceleration.x / ONE_G - acc_bias_g[0];
+    float ay_g = a.acceleration.y / ONE_G - acc_bias_g[1];
+    float az_g = a.acceleration.z / ONE_G - acc_bias_g[2];
 
-    float gx_dps = g.gyro.x * RAD2DEG;
-    float gy_dps = g.gyro.y * RAD2DEG;
-    float gz_dps = g.gyro.z * RAD2DEG;
+    float gx_dps = g.gyro.x * RAD2DEG - gyro_bias_dps[0];
+    float gy_dps = g.gyro.y * RAD2DEG - gyro_bias_dps[1];
+    float gz_dps = g.gyro.z * RAD2DEG - gyro_bias_dps[2];
+
 
     Serial.print(F("[MPU] Acc[g]: "));
     Serial.print(ax_g, 3); Serial.print(' ');
     Serial.print(ay_g, 3); Serial.print(' ');
     Serial.print(az_g, 3);
 
-    Serial.print(F("  |  Gyr[deg/s]: "));
+    // Angular speed
+    Serial.print(F("  |  Gyr[deg/s]: "));  
     Serial.print(gx_dps, 1); Serial.print(' ');
     Serial.print(gy_dps, 1); Serial.print(' ');
     Serial.print(gz_dps, 1);
