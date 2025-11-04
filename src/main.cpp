@@ -223,12 +223,12 @@ void setup() {
     mpu.setAccelerometerRange(MPU6050_RANGE_2_G);
     mpu.setGyroRange(MPU6050_RANGE_250_DEG);
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-    calibrateIMU(600, 600); // 500 samples, 500 ms are default values
+    calibrateIMU(600, 600); // 500 samples and 500 ms are default values
     Serial.println(F("OK: MPU6050 is ready (accelerometer + gyroscope)."));
   }
 
   // --- slot-type detector, input and interrupt configuration ---
-  //  when is active = LOW --> count falling edge
+  //     when is active = LOW --> count falling edge
   pinMode(PIN_ENC_L, ENC_USE_PULLUP ? INPUT_PULLUP : INPUT);
   pinMode(PIN_ENC_R, ENC_USE_PULLUP ? INPUT_PULLUP : INPUT);
   attachInterrupt(digitalPinToInterrupt(PIN_ENC_L), encLISR, FALLING);
@@ -398,7 +398,7 @@ void loop() {
   }
 
 
-  // --- Enkodery: ~500ms ---
+  // --- Encoders: ~500ms ---
   static uint32_t enc_t0 = millis();
   uint32_t now_ms = millis();
   if (now_ms - enc_t0 >= ENC_REPORT_MS) {
