@@ -7,7 +7,7 @@
 #include <Wire.h>
 #include <Arduino.h>
 #include <Servo.h>
-
+#include "img_converters.h"         // z biblioteki esp32-camera (dekoder JPEG→RGB)
 
 
 
@@ -37,7 +37,7 @@ const uint8_t MotorSpeed1 = 128;
 const uint8_t MotorSpeed2 = 128;
  
 // ===========================
-// Servo pinout
+// Servo pinout - temporarily disabled
 // ===========================
 const int SERVO_PIN = 1; 
 const int STOP_US = 1500;
@@ -107,6 +107,21 @@ void IRAM_ATTR encRISR() {
   }
 }
 
+
+// --- Vision control params ---
+static const int   VISION_PERIOD_MS   = 100;    // ~10 Hz
+static const int   SAMPLE_STRIDE      = 6;      // co ile pikseli próbkujemy (mniej=ciężej)
+static const float KP_TURN            = 0.70f;  // czułość skrętu (0..1+)
+static const float AREA_STOP          = 0.15f;  // gdy zielony >15% pikseli → zatrzymuj
+static const uint8_t PWM_MAX          = 200;    // górny sufit prędkości (poniżej 255 dla zapasu)
+static const uint8_t PWM_MIN          = 40;     // najniższa sensowna prędkość jazdy
+
+// OpenCV-owe skale progów (Twoje z suwaków)
+static const int H_MIN = 22;  // 0..179
+static const int H_MAX = 60;
+static const int S_MIN = 18;  // 0..255
+static const int V_MIN = 24;  // 0..255
+
 // ===============================================
 // Camera 
 // ===============================================
@@ -124,12 +139,12 @@ void calibrateIMU(unsigned samples = 500, unsigned settle_ms = 500) {
     sensors_event_t a, g, t;
     mpu.getEvent(&a, &g, &t);
 
-    // a.acceleration in m/s^2 --> na g
+    // a.acceleration in m/s^2 --> g
     double ax_g = a.acceleration.x / ONE_G;
     double ay_g = a.acceleration.y / ONE_G;
     double az_g = a.acceleration.z / ONE_G;
 
-    // g.gyro in rad/s --> na deg/s
+    // g.gyro in rad/s --> deg/s
     double gx_dps = g.gyro.x * RAD2DEG;
     double gy_dps = g.gyro.y * RAD2DEG;
     double gz_dps = g.gyro.z * RAD2DEG;
@@ -167,6 +182,141 @@ void calibrateIMU(unsigned samples = 500, unsigned settle_ms = 500) {
   Serial.print(gyro_bias_dps[1],2); Serial.print(" "); Serial.println(gyro_bias_dps[2],2);
 }
 
+// Globalny bufor w PSRAM
+static uint8_t* g_rgb = nullptr;
+static int gW = 0, gH = 0;
+static void ensureRgbBuf(int W, int H) {
+  if (g_rgb && gW==W && gH==H) return;
+  if (g_rgb) { free(g_rgb); g_rgb = nullptr; }
+  g_rgb = (uint8_t*) heap_caps_malloc(W * H * 3, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  gW = W; gH = H;
+}
+
+// Konwersja RGB (0..255) -> HSV w skali OpenCV (H:0..179, S:0..255, V:0..255)
+static inline void rgb_to_hsv_ocv(uint8_t r, uint8_t g, uint8_t b, int& H, int& S, int& V) {
+  float rf = r/255.0f, gf = g/255.0f, bf = b/255.0f;
+  float cmax = fmaxf(rf, fmaxf(gf, bf));
+  float cmin = fminf(rf, fminf(gf, bf));
+  float delta = cmax - cmin;
+
+  float h = 0.0f;
+  if (delta > 1e-6f) {
+    if (cmax == rf)      h = fmodf(((gf - bf)/delta), 6.0f);
+    else if (cmax == gf) h = ((bf - rf)/delta) + 2.0f;
+    else                 h = ((rf - gf)/delta) + 4.0f;
+    h *= 60.0f;
+    if (h < 0) h += 360.0f;
+  }
+  int s = (cmax <= 1e-6f) ? 0 : (int)roundf((delta / cmax) * 255.0f);
+  int v = (int)roundf(cmax * 255.0f);
+
+  H = (int)roundf(h / 2.0f); // 0..179
+  S = s; V = v;
+}
+
+// Ustaw prędkości kół (0..255), bez zmiany kierunku (jedziemy do przodu)
+static inline uint8_t clamp_pwm(int v) { return (uint8_t) (v < 0 ? 0 : (v > 255 ? 255 : v)); }
+
+static void drive_differential(float throttle01, float turn) {
+  // throttle01: 0..1 (0=stop, 1=pełna), turn: -1..1 (ujemny=skręt w lewo)
+  if (throttle01 < 0) throttle01 = 0;
+  if (throttle01 > 1) throttle01 = 1;
+  if (turn < -1) turn = -1;
+  if (turn >  1) turn =  1;
+
+  float base = PWM_MIN + (PWM_MAX - PWM_MIN) * throttle01; // minimalny ciąg zawsze >0 jeśli jedziemy
+  float l = base * (1.0f - turn);
+  float r = base * (1.0f + turn);
+
+  uint8_t pwmL = clamp_pwm((int)l);
+  uint8_t pwmR = clamp_pwm((int)r);
+
+  ledcWrite(4, pwmL); // kanał A
+  ledcWrite(5, pwmR); // kanał B
+}
+
+void visionTask(void* pv) {
+  for (;;) {
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) { vTaskDelay(pdMS_TO_TICKS(VISION_PERIOD_MS)); continue; }
+
+    // Dekodujemy klatkę do RGB888 (działa zarówno z JPEG, jak i RGB565)
+    const int W = fb->width;
+    const int Hh = fb->height;
+
+    ensureRgbBuf(W, Hh);
+    bool ok = g_rgb && fmt2rgb888(fb->buf, fb->len, fb->format, g_rgb);
+    esp_camera_fb_return(fb);  // ODDAJEMY bufor jak najszybciej
+
+    if (!ok){
+      vTaskDelay(pdMS_TO_TICKS(VISION_PERIOD_MS));
+      continue;
+    }
+
+    // Próbkuj co SAMPLE_STRIDE piksel w obu wymiarach
+    uint32_t green_cnt = 0;
+    uint64_t sum_x = 0;
+    uint32_t samples = 0;
+
+    int Smin = S_MIN, Vmin = V_MIN;
+
+    for (int y = 0; y < Hh; y += SAMPLE_STRIDE) {
+      int row = y * W;
+      for (int x = 0; x < W; x += SAMPLE_STRIDE) {
+        int idx = (row + x) * 3;
+        uint8_t r = g_rgb[idx + 0], g = g_rgb[idx + 1], b = g_rgb[idx + 2];
+        
+        int h,s,v;
+        rgb_to_hsv_ocv(r,g,b,h,s,v);
+
+        // Zielona maska wg Twoich progów
+        if (h >= H_MIN && h <= H_MAX && s >= S_MIN && v >= V_MIN) {
+          green_cnt++;
+          sum_x += x;
+        }
+        samples++;
+      }
+    }
+
+    // Sterowanie: area_ratio i odchyłka centroidu
+    float area_ratio = (samples > 0) ? (float)green_cnt / (float)samples : 0.0f;
+
+    float throttle01;
+    float turn = 0.0f;
+
+    if (green_cnt == 0) {
+      // Nie widzę piłki: tryb szukania – delikatny obrót i powolny ruch
+      throttle01 = 0.20f;
+      turn = +0.45f;   // skręt w prawo (zmień znak, jeśli chcesz lewo)
+    } else {
+      // Wylicz centroid (x̄) i odchyłkę znormalizowaną do -1..1
+      float cx = (float)sum_x / (float)green_cnt;              // 0..W-1
+      float cx_norm = (cx - (W * 0.5f)) / (W * 0.5f);          // -1 .. +1
+
+      // Ile jedziemy na wprost? Im bliżej (większa plama), tym wolniej.
+      float slow = area_ratio / AREA_STOP;     // 0..1..>1
+      if (slow > 1.0f) slow = 1.0f;
+      throttle01 = 1.0f - slow;                // 1→0
+
+      // Skręt proporcjonalny do odchyłki centroidu
+      turn = KP_TURN * cx_norm;
+      if (turn < -1) turn = -1;
+      if (turn >  1) turn =  1;
+
+      // Jeśli naprawdę blisko – zatrzymaj
+      if (area_ratio >= AREA_STOP) {
+        throttle01 = 0.0f;
+        turn = 0.0f;
+      }
+    }
+
+    drive_differential(throttle01, turn);
+
+    vTaskDelay(pdMS_TO_TICKS(VISION_PERIOD_MS));
+  }
+}
+
+
 void setup() {
 
   // --- Motors + PWM on particular channels
@@ -179,15 +329,17 @@ void setup() {
   ledcAttachPin(pwmB, 5);  // Attach Motor B PWM pin to channel 5
 
   // Motor A forward
-  digitalWrite(in1A, LOW);  
-  digitalWrite(in2A, HIGH);
+  digitalWrite(in1A, LOW);  //LOW      
+  digitalWrite(in2A, HIGH);   //HIGH
  
  // Motor B forward
-  digitalWrite(in1B, LOW);
-  digitalWrite(in2B, HIGH);
+  digitalWrite(in1B, HIGH);    //HIGH
+  digitalWrite(in2B, LOW);   //LOW
   
-  ledcWrite(4, MotorSpeed1); // Write speed to channel 4 (Motor A)
-  ledcWrite(5, MotorSpeed2); // Write speed to channel 5 (Motor B)
+  ledcWrite(4, 0); // Write speed to channel 4 (Motor A)
+  ledcWrite(5, 0); // Write speed to channel 5 (Motor B)
+
+
 
   // --- Serial ---
   Serial.begin(115200);
@@ -195,8 +347,8 @@ void setup() {
   Serial.println();
 
   // --- Servo, do not overwrite timers before motors configuration ---
-  servo1.attach(SERVO_PIN);
-  servo1.writeMicroseconds(STOP_US + SPEED_US);
+  // servo1.attach(SERVO_PIN);
+  // servo1.writeMicroseconds(STOP_US + SPEED_US);
 
   // --- I2C sensors initialization on GPIO5/6 (Camera has its own SCCB on 39/40) ---
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -336,6 +488,7 @@ void setup() {
   Serial.println("WiFi connected");
 
   startCameraServer();
+  xTaskCreatePinnedToCore(visionTask, "vision", 8192, nullptr, 1, nullptr, 1);
 
   // http://172.20.10.2:80/stream
   Serial.print("Camera Ready! Use 'http://");
@@ -362,7 +515,7 @@ void loop() {
      Serial.print(m.RangeMilliMeter);
       Serial.println(F(" mm"));
     } else {
-      Serial.println(F("[VL53] poza zakresem / błąd"));
+      Serial.println(F("[VL53] out of range / error"));
     }
   }
 
@@ -411,7 +564,7 @@ void loop() {
     uint32_t pL = encL_count; encL_count = 0;
     uint32_t pR = encR_count; encR_count = 0;
     interrupts();
-
+    // Add calculations about velocity and path
     float hzL  = (dt > 0.0f) ? (pL / dt) : 0.0f;
     float hzR  = (dt > 0.0f) ? (pR / dt) : 0.0f;
     float rpmL = (PULSES_PER_REV_L > 0.0f) ? (hzL * 60.0f / PULSES_PER_REV_L) : 0.0f;
@@ -425,7 +578,7 @@ void loop() {
     Serial.print(F(" RPM="));        Serial.println(rpmR, 1);
   }
 
-  // --- Looped servo movement is executed in setup ---
+  // --- Looped servo movement is executed in setup --- (disabled)
 
 
   // --- Web server is executed in setup ---
