@@ -25,8 +25,8 @@ const char *password = "essa1234";
 // ===========================
 // Motors
 // ===========================
-const int pwmA = 9, in1A = 8, in2A = 7;
-const int pwmB = 4, in1B = 3, in2B = 2;
+const int pwmA = D10, in1A = D9, in2A = D8; // 9  8  7
+const int pwmB = D3, in1B = D2, in2B = D1; // 4  3  2
 
 const int freq = 20000;          // 20kHz
 const int res = 8;               // 8-bit resolution (0..255)
@@ -182,6 +182,9 @@ void calibrateIMU(unsigned samples = 500, unsigned settle_ms = 500) {
   Serial.print(gyro_bias_dps[1],2); Serial.print(" "); Serial.println(gyro_bias_dps[2],2);
 }
 
+
+
+
 // Globalny bufor w PSRAM
 static uint8_t* g_rgb = nullptr;
 static int gW = 0, gH = 0;
@@ -217,23 +220,50 @@ static inline void rgb_to_hsv_ocv(uint8_t r, uint8_t g, uint8_t b, int& H, int& 
 // Ustaw prędkości kół (0..255), bez zmiany kierunku (jedziemy do przodu)
 static inline uint8_t clamp_pwm(int v) { return (uint8_t) (v < 0 ? 0 : (v > 255 ? 255 : v)); }
 
-static void drive_differential(float throttle01, float turn) {
-  // throttle01: 0..1 (0=stop, 1=pełna), turn: -1..1 (ujemny=skręt w lewo)
-  if (throttle01 < 0) throttle01 = 0;
-  if (throttle01 > 1) throttle01 = 1;
-  if (turn < -1) turn = -1;
-  if (turn >  1) turn =  1;
+static void setMotor(
+    int pwmChannel, int in1Pin, int in2Pin,
+    float speed   // -1..1 (minus = wstecz)
+) {
+  if (speed > 1)  speed = 1;
+  if (speed < -1) speed = -1;
 
-  float base = PWM_MIN + (PWM_MAX - PWM_MIN) * throttle01; // minimalny ciąg zawsze >0 jeśli jedziemy
-  float l = base * (1.0f - turn);
-  float r = base * (1.0f + turn);
+  bool reverse = (speed < 0);
+  float mag = fabs(speed);
 
-  uint8_t pwmL = clamp_pwm((int)l);
-  uint8_t pwmR = clamp_pwm((int)r);
+  int pwm = (int)(PWM_MIN + (PWM_MAX - PWM_MIN) * mag);
+  if (mag == 0) pwm = 0;
 
-  ledcWrite(4, pwmL); // kanał A
-  ledcWrite(5, pwmR); // kanał B
+  if (pwm == 0) {
+    digitalWrite(in1Pin, LOW);
+    digitalWrite(in2Pin, LOW);
+  } else if (reverse) {
+    digitalWrite(in1Pin, HIGH);
+    digitalWrite(in2Pin, LOW);
+  } else {
+    digitalWrite(in1Pin, LOW);
+    digitalWrite(in2Pin, HIGH);
+  }
+
+  ledcWrite(pwmChannel, clamp_pwm(pwm));
 }
+
+void drive_differential(float throttle, float turn) {
+  // throttle: -1..1, turn: -1..1
+  if (throttle > 1)  throttle = 1;
+  if (throttle < -1) throttle = -1;
+  if (turn > 1)      turn = 1;
+  if (turn < -1)     turn = -1;
+
+  float l = throttle - turn;
+  float r = throttle + turn;
+
+  float maxAbs = max(fabs(l), fabs(r));
+  if (maxAbs > 1.0f) { l /= maxAbs; r /= maxAbs; }
+
+  setMotor(4, in1A, in2A, l);
+  setMotor(5, in1B, in2B, r);
+}
+
 
 void visionTask(void* pv) {
   for (;;) {
@@ -281,13 +311,13 @@ void visionTask(void* pv) {
     // Sterowanie: area_ratio i odchyłka centroidu
     float area_ratio = (samples > 0) ? (float)green_cnt / (float)samples : 0.0f;
 
-    float throttle01;
+    float throttle;
     float turn = 0.0f;
 
     if (green_cnt == 0) {
       // Nie widzę piłki: tryb szukania – delikatny obrót i powolny ruch
-      throttle01 = 0.20f;
-      turn = +0.45f;   // skręt w prawo (zmień znak, jeśli chcesz lewo)
+      throttle = 0.0f;
+      turn = +0.6f;   // skręt w prawo (zmień znak, jeśli chcesz lewo)
     } else {
       // Wylicz centroid (x̄) i odchyłkę znormalizowaną do -1..1
       float cx = (float)sum_x / (float)green_cnt;              // 0..W-1
@@ -296,7 +326,7 @@ void visionTask(void* pv) {
       // Ile jedziemy na wprost? Im bliżej (większa plama), tym wolniej.
       float slow = area_ratio / AREA_STOP;     // 0..1..>1
       if (slow > 1.0f) slow = 1.0f;
-      throttle01 = 1.0f - slow;                // 1→0
+      throttle = 1.0f - slow;                // 1→0
 
       // Skręt proporcjonalny do odchyłki centroidu
       turn = KP_TURN * cx_norm;
@@ -305,16 +335,19 @@ void visionTask(void* pv) {
 
       // Jeśli naprawdę blisko – zatrzymaj
       if (area_ratio >= AREA_STOP) {
-        throttle01 = 0.0f;
+        throttle = 0.0f;
         turn = 0.0f;
       }
     }
 
-    drive_differential(throttle01, turn);
+    drive_differential(throttle, turn);
 
     vTaskDelay(pdMS_TO_TICKS(VISION_PERIOD_MS));
   }
 }
+
+
+
 
 
 void setup() {
@@ -328,16 +361,16 @@ void setup() {
   ledcAttachPin(pwmA, 4);  // Attach Motor A PWM pin to channel 4
   ledcAttachPin(pwmB, 5);  // Attach Motor B PWM pin to channel 5
 
-  // Motor A forward
-  digitalWrite(in1A, LOW);  //LOW      
-  digitalWrite(in2A, HIGH);   //HIGH
+//   // Motor A forward
+//   digitalWrite(in1A, LOW);     //LOW      
+//   digitalWrite(in2A, HIGH);    //HIGH
  
- // Motor B forward
-  digitalWrite(in1B, HIGH);    //HIGH
-  digitalWrite(in2B, LOW);   //LOW
+//  // Motor B forward
+//   digitalWrite(in1B, HIGH);    //HIGH
+//   digitalWrite(in2B, LOW);     //LOW
   
-  ledcWrite(4, 0); // Write speed to channel 4 (Motor A)
-  ledcWrite(5, 0); // Write speed to channel 5 (Motor B)
+//   ledcWrite(4, 0); // Write speed to channel 4 (Motor A)
+//   ledcWrite(5, 0); // Write speed to channel 5 (Motor B)
 
 
 
