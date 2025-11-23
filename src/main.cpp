@@ -12,7 +12,7 @@
 #include <Servo360.h>
 #include <TofVL53.h>
 #include <Encoders.h>
-
+#include <VisionBall.h>
 
 // ===========================
 // WiFi
@@ -59,12 +59,81 @@ static const float PULSES_PER_REV_L = 20.0f;        // Left shield pulses/rotati
 static const float PULSES_PER_REV_R = 20.0f;        // Right shield pulses/rotation !(TO ADJUST)!
 static const unsigned long ENC_MIN_PULSE_US = 200;  // time filter (anti-vibration)
 
-
 // ===============================================
 // Camera 
 // ===============================================
 void startCameraServer();
 void setupLedFlash();
+
+// ===============================================
+// Detection
+// ===============================================
+VisionBall vision;
+
+static inline int clampi(int v, int lo, int hi){
+  return v<lo?lo:(v>hi?hi:v);
+}
+
+// throttle, turn: -1..1
+void driveDifferential(float throttle, float turn){
+  if (throttle > 1) throttle = 1;
+  if (throttle < -1) throttle = -1;
+  if (turn > 1) turn = 1;
+  if (turn < -1) turn = -1;
+
+  float l = throttle - turn;
+  float r = throttle + turn;
+
+  float maxAbs = max(fabs(l), fabs(r));
+  if (maxAbs > 1.0f) { l /= maxAbs; r /= maxAbs; }
+
+  int pwmL = (int)(l * 255.0f);
+  int pwmR = (int)(r * 255.0f);
+
+  motors.setA(clampi(pwmL, -255, 255));
+  motors.setB(clampi(pwmR, -255, 255));
+}
+
+void visionTask(void*){
+  // parametry sterowania
+  const float KP_TURN   = 0.70f;  // skręt od centroidu
+  const float AREA_STOP = 0.15f;  // jak plama > 15% -> jesteśmy blisko
+  const float SEARCH_TURN = 0.6f; // szukanie - obrót w miejscu
+
+  for(;;){
+    vision.update();
+    if (vision.hasNew()){
+      float throttle = 0.0f;
+      float turn     = 0.0f;
+
+      if (!vision.seen()){
+        // nie widzę piłki -> obracaj się, żeby znaleźć
+        throttle = 0.0f;
+        turn = SEARCH_TURN;
+      } else {
+        float area = vision.areaRatio();
+        float cx   = vision.cxNorm();
+
+        // im bliżej (większa plama), tym wolniej
+        float slow = area / AREA_STOP;
+        if (slow > 1.0f) slow = 1.0f;
+        throttle = 1.0f - slow;     // 1 -> 0
+
+        // skręt proporcjonalny do odchyłki centroidu
+        turn = KP_TURN * cx;
+
+        if (area >= AREA_STOP){
+          throttle = 0.0f;
+          turn = 0.0f;
+        }
+      }
+
+      driveDifferential(throttle, turn);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10)); // mały oddech RTOS
+  }
+}
 
 
 // ===============================================
@@ -225,12 +294,20 @@ void setup() {
   Serial.print(WiFi.localIP());
   Serial.println("' to connect");
 
+  // --- Camera ---
+  VisionBall::Params vp;
+  vp.sampleStride = 6;
+  vp.periodMs = 100;
 
-  // Motors test: 2s fwd, 1s stop, 2s rev, 1s stop, 3s pasue
-  motors.startTest(); 
+  vp.hsv.hMin = 36; //22
+  vp.hsv.hMax = 75; //60
+  vp.hsv.sMin = 55; //18
+  vp.hsv.vMin = 55; //24
+  vision.begin(vp); 
 
+
+  xTaskCreatePinnedToCore(visionTask, "vision", 8192, nullptr, 1, nullptr, 1);
 }
-
 
 
 // ===============================================
@@ -246,12 +323,9 @@ void loop() {
   tof.update();
   if (tof.hasNew()) {}
 
-  // --- Motors ---
-  motors.updateTest();
-
   // --- Encoders ---
   enc.update();
-  if (enc.hasNew()) { enc.printDebug(); }
+  if (enc.hasNew()) {}
 
   delay(1);
 }
