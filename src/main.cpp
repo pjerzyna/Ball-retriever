@@ -181,6 +181,18 @@ void setup() {
   dcfg.debug_nn = false;
   detection.begin(dcfg);
 
+  /*
+  Detection::Config dcfg;
+  dcfg.debug_nn            = false;
+  dcfg.periodMs            = 200;   // detekcja co ~200 ms
+  dcfg.confidenceThreshold = 0.6f;  // wymagaj trochę wyższej pewności
+
+  if (!detection.begin(dcfg)) {
+      Serial.println("Detection init failed");
+  }
+
+  */
+
 
   // --- WiFi + camera server ---
   #if ENABLE_STREAM
@@ -221,6 +233,16 @@ void loop() {
 
   // --- FOMO --- 
   detection.update();
+ 
+  /*
+  if (detection.hasResult()) {
+        auto r = detection.lastResult();
+        if (r.valid) {
+            // np. sterowanie robotem po bboxie
+            // r.x, r.y, r.width, r.height, r.score
+        }
+    }
+  */
 
   delay(1);
 }
