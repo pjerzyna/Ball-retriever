@@ -2,10 +2,7 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <Arduino.h>
-#include "img_converters.h"
-
-
-
+#include "img_converters.h" //?
 #include "board_config.h"
 #include <ImuMPU.h>
 #include <Motors.h>
@@ -13,6 +10,11 @@
 #include <TofVL53.h>
 #include <Encoders.h>
 #include <VisionBall.h>
+#include "Detection.h" // 
+
+
+#define ENABLE_PERIPHERALS 0
+#define ENABLE_STREAM 0
 
 // ===========================
 // WiFi
@@ -55,8 +57,8 @@ static const uint8_t PIN_ENC_R = 43;  // right wheel
 
 static const bool ENC_USE_PULLUP = false;           // LM393 has its own pull-up
 static const unsigned long ENC_REPORT_MS = 500;     // 2Hz
-static const float PULSES_PER_REV_L = 20.0f;        // Left shield pulses/rotation !(TO ADJUST)!
-static const float PULSES_PER_REV_R = 20.0f;        // Right shield pulses/rotation !(TO ADJUST)!
+static const float PULSES_PER_REV_L = 20.0f;        // Left shield pulses/rotation
+static const float PULSES_PER_REV_R = 20.0f;        // Right shield pulses/rotation
 static const unsigned long ENC_MIN_PULSE_US = 200;  // time filter (anti-vibration)
 
 // ===============================================
@@ -68,72 +70,8 @@ void setupLedFlash();
 // ===============================================
 // Detection
 // ===============================================
-VisionBall vision;
+//VisionBall vision;
 
-static inline int clampi(int v, int lo, int hi){
-  return v<lo?lo:(v>hi?hi:v);
-}
-
-// throttle, turn: -1..1
-void driveDifferential(float throttle, float turn){
-  if (throttle > 1) throttle = 1;
-  if (throttle < -1) throttle = -1;
-  if (turn > 1) turn = 1;
-  if (turn < -1) turn = -1;
-
-  float l = throttle - turn;
-  float r = throttle + turn;
-
-  float maxAbs = max(fabs(l), fabs(r));
-  if (maxAbs > 1.0f) { l /= maxAbs; r /= maxAbs; }
-
-  int pwmL = (int)(l * 255.0f);
-  int pwmR = (int)(r * 255.0f);
-
-  motors.setA(clampi(pwmL, -255, 255));
-  motors.setB(clampi(pwmR, -255, 255));
-}
-
-void visionTask(void*){
-  // parametry sterowania
-  const float KP_TURN   = 0.70f;  // skręt od centroidu
-  const float AREA_STOP = 0.15f;  // jak plama > 15% -> jesteśmy blisko
-  const float SEARCH_TURN = 0.6f; // szukanie - obrót w miejscu
-
-  for(;;){
-    vision.update();
-    if (vision.hasNew()){
-      float throttle = 0.0f;
-      float turn     = 0.0f;
-
-      if (!vision.seen()){
-        // nie widzę piłki -> obracaj się, żeby znaleźć
-        throttle = 0.0f;
-        turn = SEARCH_TURN;
-      } else {
-        float area = vision.areaRatio();
-        float cx   = vision.cxNorm();
-
-        // im bliżej (większa plama), tym wolniej
-        float slow = area / AREA_STOP;
-        if (slow > 1.0f) slow = 1.0f;
-        throttle = 1.0f - slow;     // 1 -> 0
-
-        // skręt proporcjonalny do odchyłki centroidu
-        turn = KP_TURN * cx;
-
-        if (area >= AREA_STOP){
-          throttle = 0.0f;
-          turn = 0.0f;
-        }
-      }
-
-      driveDifferential(throttle, turn);
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(10)); // mały oddech RTOS
-  }
-}
 
 
 // ===============================================
@@ -144,6 +82,7 @@ void setup() {
   Serial.setDebugOutput(true);
   Serial.println();
 
+  #if ENABLE_PERIPHERALS
   // --- Servo, do not overwrite timers before motors configuration ---
   servo1.begin(SERVO_PIN, SERVO_STOP_US);   // stop at the beggining (1500us)
   servo1.setSpeed(0.6f);                    // constant forward rotation
@@ -169,7 +108,7 @@ void setup() {
 
   // --- MPU6050 (I2C) ---
   Serial.println("Calling imu.begin()...");
-  imu.begin(Wire); //bool ok = 
+  imu.begin(Wire); 
   delay(100);
 
   // --- Encoders ---
@@ -181,7 +120,7 @@ void setup() {
   ecfg.reportMs = ENC_REPORT_MS;
   enc.begin(ecfg);
   delay(100);
-
+  #endif
 
 
   
@@ -207,40 +146,16 @@ void setup() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_UXGA;
 
-  config.pixel_format = PIXFORMAT_JPEG;     // for streaming
-  //config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
+  
+  config.pixel_format = PIXFORMAT_RGB565;
+  config.frame_size = FRAMESIZE_240X240;
 
-  config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
+  config.grab_mode = CAMERA_GRAB_LATEST; //CAMERA_GRAB_WHEN_EMPTY - to jest lżejsze
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 12;
-  config.fb_count = 1;
-
-  // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
-  //                      for larger pre-allocated frame buffer.
-  if (config.pixel_format == PIXFORMAT_JPEG) {
-    if (psramFound()) {
-      config.jpeg_quality = 10;
-      config.fb_count = 2;
-      config.grab_mode = CAMERA_GRAB_LATEST;
-    } else {
-      // Limit the frame size when PSRAM is not available
-      config.frame_size = FRAMESIZE_SVGA;
-      config.fb_location = CAMERA_FB_IN_DRAM;
-    }
-  } else {
-    // Best option for face detection/recognition
-    config.frame_size = FRAMESIZE_240X240;
-#if CONFIG_IDF_TARGET_ESP32S3
-    config.fb_count = 2;
-#endif
-  }
-
-#if defined(CAMERA_MODEL_ESP_EYE)
-  pinMode(13, INPUT_PULLUP);
-  pinMode(14, INPUT_PULLUP);
-#endif
+  // fb_count = 2 nie daje faktycznej korzyści przy FOMO ~150 ms
+  config.fb_count = 1;   //2 - po jakimś czasie: Stack canary (cam_task)
 
   // camera init
   esp_err_t err = esp_camera_init(&config);
@@ -252,30 +167,23 @@ void setup() {
   sensor_t *s = esp_camera_sensor_get();
   // initial sensors are flipped vertically and colors are a bit saturated
   if (s->id.PID == OV3660_PID) {
-    s->set_vflip(s, 1);        // flip it back
+
+    // WATCH OUT FOR THIS!!
+    // model's training data must be with same adjustments!!!
+    
+    s->set_vflip(s, 1);        // flip it back        
     s->set_brightness(s, 1);   // up the brightness just a bit
-    s->set_saturation(s, -2);  // lower the saturation
-  }
-  // drop down frame size for higher initial frame rate
-  if (config.pixel_format == PIXFORMAT_JPEG) {
-    s->set_framesize(s, FRAMESIZE_QVGA);
+    s->set_saturation(s, 0);   // basic saturation  // bylo wczesniej na -2
   }
 
-#if defined(CAMERA_MODEL_M5STACK_WIDE) || defined(CAMERA_MODEL_M5STACK_ESP32CAM)
-  s->set_vflip(s, 1);
-  s->set_hmirror(s, 1);
-#endif
-
-#if defined(CAMERA_MODEL_ESP32S3_EYE)
-  s->set_vflip(s, 1);
-#endif
-
-// Setup LED FLash if LED pin is defined in camera_pins.h
-#if defined(LED_GPIO_NUM)
-  setupLedFlash();
-#endif  
+  // --- Detection ---
+  if (!detection_init()) {
+      Serial.println("Detection init failed");
+  }
+  
 
   // --- WiFi + camera server ---
+  #if ENABLE_STREAM
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
 
@@ -293,39 +201,30 @@ void setup() {
   Serial.print("Camera Ready! Use 'http://");
   Serial.print(WiFi.localIP());
   Serial.println("' to connect");
+  #endif
 
-  // --- Camera ---
-  VisionBall::Params vp;
-  vp.sampleStride = 6;
-  vp.periodMs = 100;
-
-  vp.hsv.hMin = 36; //22
-  vp.hsv.hMax = 75; //60
-  vp.hsv.sMin = 55; //18
-  vp.hsv.vMin = 55; //24
-  vision.begin(vp); 
-
-
-  xTaskCreatePinnedToCore(visionTask, "vision", 8192, nullptr, 1, nullptr, 1);
 }
 
 
 // ===============================================
 void loop() {
+  static uint32_t last_detect_ms = 0; //
   uint32_t now = millis();
 
-
   // --- IMU ---
-  imu.update();
-  if (imu.hasNew()) {}
+  //imu.update();
 
   // --- TOF ---
-  tof.update();
-  if (tof.hasNew()) {}
+  //tof.update();
 
   // --- Encoders ---
-  enc.update();
-  if (enc.hasNew()) {}
+  //enc.update();
+
+  // --- FOMO --- 
+  if (now - last_detect_ms > 200) {
+    detection_run_once();
+    last_detect_ms = now;
+  }
 
   delay(1);
 }
