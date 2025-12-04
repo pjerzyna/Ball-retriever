@@ -9,8 +9,8 @@
 #include <Servo360.h>
 #include <TofVL53.h>
 #include <Encoders.h>
-#include <VisionBall.h>
-#include "Detection.h" // 
+//#include <VisionBall.h>
+#include "Detection.h" 
 
 
 #define ENABLE_PERIPHERALS 0
@@ -70,7 +70,7 @@ void setupLedFlash();
 // ===============================================
 // Detection
 // ===============================================
-//VisionBall vision;
+Detection detection;
 
 
 
@@ -177,10 +177,10 @@ void setup() {
   }
 
   // --- Detection ---
-  if (!detection_init()) {
-      Serial.println("Detection init failed");
-  }
-  
+  Detection::Config dcfg;
+  dcfg.debug_nn = false;
+  detection.begin(dcfg);
+
 
   // --- WiFi + camera server ---
   #if ENABLE_STREAM
@@ -208,7 +208,6 @@ void setup() {
 
 // ===============================================
 void loop() {
-  static uint32_t last_detect_ms = 0; //
   uint32_t now = millis();
 
   // --- IMU ---
@@ -221,10 +220,7 @@ void loop() {
   //enc.update();
 
   // --- FOMO --- 
-  if (now - last_detect_ms > 200) {
-    detection_run_once();
-    last_detect_ms = now;
-  }
+  detection.update();
 
   delay(1);
 }
