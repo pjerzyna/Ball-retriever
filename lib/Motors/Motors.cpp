@@ -48,10 +48,13 @@ void Motors::setOne(int pwmPin, int in1, int in2, int ch, int speed) {
 }
 
 void Motors::setA(int speed) {
-  setOne(_p.pwmA, _p.in1A, _p.in2A, _p.chA, speed);
+  int s = (int)(speed * _scaleA);
+  // motor A has reverse polarity - the opposite sign is a compensation
+  setOne(_p.pwmA, _p.in1A, _p.in2A, _p.chA, -s);
 }
 void Motors::setB(int speed) {
-  setOne(_p.pwmB, _p.in1B, _p.in2B, _p.chB, speed);
+  int s = (int)(speed * _scaleB);
+  setOne(_p.pwmB, _p.in1B, _p.in2B, _p.chB, s);
 }
 void Motors::setBoth(int speedA, int speedB) {
   setA(speedA);
@@ -73,12 +76,13 @@ void Motors::stop(bool brake) {
   ledcWrite(_p.chB, 0);
 }
 
-// ------------------ TEST FSM ------------------
+
+// ------------------ TEST Finite State Machine ------------------
 
 void Motors::enterState(TestState s) {
   _testState = s;
   _tState = millis();
-  _entry = true; // sygnał: świeżo weszliśmy w stan
+  _entry = true; // signal: we have recently entered the state
 }
 
 void Motors::startTest(uint16_t testMs, uint16_t stopMs,
@@ -92,10 +96,10 @@ void Motors::startTest(uint16_t testMs, uint16_t stopMs,
 
   _testActive = true;
 
-  Serial.println("Rozpoczynanie pełnego testu silników A i B.");
+  Serial.println("Beginning of full test of A and B motors.");
   Serial.println("----------------------------------------");
 
-  enterState(T_B_FWD); // zaczynamy od B do przodu
+  enterState(T_B_FWD); // starting with B spinning forward
 }
 
 void Motors::updateTest() {
@@ -106,10 +110,10 @@ void Motors::updateTest() {
 
   switch (_testState) {
 
-    // ---- SILNIK B ----
+    // ---- Motor B ----
     case T_B_FWD:
       if (_entry) {
-        Serial.println("Silnik B: Kierunek 1, Predkosc MAX");
+        Serial.println("Motor B: Direction 1, MAX Speed");
         setB(+_testMax);
         _entry = false;
       }
@@ -118,7 +122,7 @@ void Motors::updateTest() {
 
     case T_B_STOP1:
       if (_entry) {
-        Serial.println("Silnik B: STOP");
+        Serial.println("Motor B: STOP");
         setB(0);
         _entry = false;
       }
@@ -127,7 +131,7 @@ void Motors::updateTest() {
 
     case T_B_REV:
       if (_entry) {
-        Serial.println("Silnik B: Kierunek 2, Predkosc SREDNIA");
+        Serial.println("Motor B: Direction 2, AVERAGE Speed");
         setB(-_testMid);
         _entry = false;
       }
@@ -136,17 +140,17 @@ void Motors::updateTest() {
 
     case T_B_STOP2:
       if (_entry) {
-        Serial.println("Silnik B: STOP (koniec testu)");
+        Serial.println("Motor B: STOP (end of test)");
         setB(0);
         _entry = false;
       }
       if (dt >= _stopMs) enterState(T_A_FWD);
       break;
 
-    // ---- SILNIK A ----
+    // ---- Motor A ----         
     case T_A_FWD:
       if (_entry) {
-        Serial.println("Silnik A: Kierunek 1, Predkosc MAX");
+        Serial.println("Motor A: Direction 1, MAX Speed");
         setA(+_testMax);
         _entry = false;
       }
@@ -155,7 +159,7 @@ void Motors::updateTest() {
 
     case T_A_STOP1:
       if (_entry) {
-        Serial.println("Silnik A: STOP");
+        Serial.println("Motor A: STOP");
         setA(0);
         _entry = false;
       }
@@ -164,7 +168,7 @@ void Motors::updateTest() {
 
     case T_A_REV:
       if (_entry) {
-        Serial.println("Silnik A: Kierunek 2, Predkosc SREDNIA");
+        Serial.println("Motor A: Direction 2, AVERAGE Speed");
         setA(-_testMid);
         _entry = false;
       }
@@ -173,10 +177,10 @@ void Motors::updateTest() {
 
     case T_A_STOP2:
       if (_entry) {
-        Serial.println("Silnik A: STOP (koniec testu)");
+        Serial.println("Motor A: STOP (end of test)");
         setA(0);
         Serial.println("----------------------------------------");
-        Serial.println("Czekanie na powtórzenie cyklu testowego...");
+        Serial.println("Waiting for repetition of the test cycle...");
         _entry = false;
       }
       if (dt >= _stopMs) enterState(T_PAUSE);
@@ -184,7 +188,7 @@ void Motors::updateTest() {
 
     case T_PAUSE:
       if (_entry) {
-        // nic nie robimy poza czekaniem
+        // do not do anything beyond waiting
         _entry = false;
       }
       if (dt >= _pauseMs) enterState(T_B_FWD);

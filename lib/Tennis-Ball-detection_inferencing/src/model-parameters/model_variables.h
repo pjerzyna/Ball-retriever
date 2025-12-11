@@ -146,7 +146,7 @@ const ei_impulse_t impulse_834802_2 = {
     .project_name = "Tennis-Ball-detection",
     .impulse_id = 2,
     .impulse_name = "Impulse #2",
-    .deploy_version = 7,
+    .deploy_version = 9,
 
     .nn_input_frame_size = 27648,
     .raw_sample_count = 9216,

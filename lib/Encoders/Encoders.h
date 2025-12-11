@@ -6,22 +6,27 @@ public:
   struct Config {
     uint8_t pinL;
     uint8_t pinR;
-    bool usePullup = false;          // LM393 zwykle ma pull-up → false
+    bool usePullup = false;          // LM393 has pull-up
     float pulsesPerRevL = 20.0f;
     float pulsesPerRevR = 20.0f;
-    uint32_t minPulseUs = 200;       // filtr czasu między impulsami
-    uint32_t reportMs = 500;         // co ile liczyć RPM
+    uint32_t minPulseUs = 200;       // time filter between impulses
+    uint32_t reportMs = 500;       
+
+    float wheelRadius_m = 0.0125f;
   };
 
   bool begin(const Config& cfg);
 
-  void update();              // wołaj w loop()
+  void update();             
   bool hasNew() const { return _newSample; }
 
   float rpmL() const { return _rpmL; }
   float rpmR() const { return _rpmR; }
   float hzL()  const { return _hzL;  }
   float hzR()  const { return _hzR;  }
+
+  float vL() const { return _vL; }   // [m/s]
+  float vR() const { return _vR; }   // [m/s]
 
   uint32_t pulsesL() const { return _pulsesL; }
   uint32_t pulsesR() const { return _pulsesR; }
@@ -41,6 +46,8 @@ private:
 
   volatile uint32_t _countL = 0, _countR = 0;
   volatile uint32_t _lastUsL = 0, _lastUsR = 0;
+
+  float _vL = 0.0f, _vR = 0.0f; 
 
   static void IRAM_ATTR isrL(void* arg);
   static void IRAM_ATTR isrR(void* arg);

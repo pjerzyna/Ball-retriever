@@ -132,12 +132,15 @@ bool Detection::runInferenceOnce(Result& out)
         ei_printf("ERR: Failed to run classifier (%d)\n", err);
         return false;
     }
-
+    if (_cfg.log) {
     ei_printf("Predictions (DSP: %d ms., Classification: %d ms., Anomaly: %d ms.): \n",
               result.timing.dsp, result.timing.classification, result.timing.anomaly);
+    }
 
 #if EI_CLASSIFIER_OBJECT_DETECTION == 1
+    if (_cfg.log) {
     ei_printf("Object detection bounding boxes:\r\n");
+    }
 
     float bestScore = _cfg.confidenceThreshold;
     bool  found     = false;
@@ -148,9 +151,10 @@ bool Detection::runInferenceOnce(Result& out)
         if (bb.value == 0) {
             continue;
         }
-
+        if (1) { //_cfg.log
         ei_printf("  %s (%f) [ x: %u, y: %u, width: %u, height: %u ]\r\n",
                   bb.label, bb.value, bb.x, bb.y, bb.width, bb.height);
+        }
 
         if (bb.value >= bestScore) {
             bestScore = bb.value;
@@ -198,7 +202,9 @@ bool Detection::runInferenceOnce(Result& out)
 #endif
 
 #if EI_CLASSIFIER_HAS_ANOMALY
+    if (_cfg.log) {
     ei_printf("Anomaly prediction: %.3f\r\n", result.anomaly);
+    }
 #endif
 
     return true;

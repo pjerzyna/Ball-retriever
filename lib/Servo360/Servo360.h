@@ -6,7 +6,7 @@ class Servo360 {
 public:
   bool begin(int pin, int stopUs = 1500, int minUs = 1000, int maxUs = 2000);
 
-  // speed: -1..1 (minus = wstecz), 0 = stop
+  // speed: -1..1 (minus = backward), 0 = stop
   void setSpeed(float speed);
 
   void stop() { setSpeed(0); }
@@ -20,5 +20,5 @@ private:
   int _stopUs = 1500;
   int _minUs = 1000;
   int _maxUs = 2000;
-  int _maxDelta = 250; // ograniczenie prędkości
+  int _maxDelta = 250; // speed limit
 };

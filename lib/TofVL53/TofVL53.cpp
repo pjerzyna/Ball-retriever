@@ -33,24 +33,41 @@ void TofVL53::update() {
   _lox.rangingTest(&m, false);
 
   if (m.RangeStatus != 4 && m.RangeMilliMeter > 0) {
-    _mm = m.RangeMilliMeter;
+    // valid measurement
+    _mm    = m.RangeMilliMeter;
     _valid = true;
+
+    // basic distance filter [mm]
+    const float ALPHA = 0.5f;   // (0..1)
+    if (_mmFilt == 0) {
+      // first time is direct
+      _mmFilt = _mm;
+    } else {
+      _mmFilt = (uint16_t)(ALPHA * (float)_mm +
+                           (1.0f - ALPHA) * (float)_mmFilt);
+    }
   } else {
-    _mm = 0;
+    // error or out of range
+    _mm    = 0;
     _valid = false;
+    // _mmFilt is deliberately left unchanged  - keep last reasonable value 
   }
 
   _newSample = true;
 }
 
+
 void TofVL53::printDebug(Stream& s) const {
   if (!_ok) return;
 
   if (_valid) {
-    s.print(F("[VL53] "));
+    s.print(F("[VL53] raw="));
     s.print(_mm);
+    s.print(F(" mm  filt="));
+    s.print(_mmFilt);
     s.println(F(" mm"));
   } else {
     s.println(F("[VL53] out of range / error"));
   }
 }
+

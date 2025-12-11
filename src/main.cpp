@@ -9,11 +9,10 @@
 #include <Servo360.h>
 #include <TofVL53.h>
 #include <Encoders.h>
-//#include <VisionBall.h>
-#include "Detection.h" 
+#include "Detection.h"  //dodac pozniej do bibliotek w /lib
 
 
-#define ENABLE_PERIPHERALS 0
+#define ENABLE_PERIPHERALS 1
 #define ENABLE_STREAM 0
 
 // ===========================
@@ -72,6 +71,33 @@ void setupLedFlash();
 // ===============================================
 Detection detection;
 
+// parametry detekcji
+const uint16_t TARGET_WIDTH          = 20;     // "duża" piłka => blisko, trzeba zwalniać
+const float CALIB_CENTER_X           = 52.0f;  // skalibrowany środek - na podstawie lokalizacji kamerki na moim robocie
+const float MIN_CONFIDENCE           = 0.4f;
+const int EI_CLASSIFIER_INPUT_WIDTH  = 96;
+const int EI_CLASSIFIER_INPUT_HEIGHT = 96;
+
+// parametry sterowania PD
+const float KP_TURN   = 35.0f;    // 25.0f
+const float KD_ERR    = 8;        // 6
+const float DEAD_BAND = 0.14f;    // 0.14f
+const float ALPHA_ERR = 0.6f;     // 0.5f = filtracja błędu (0..1)
+const float ALPHA_D   = 0.4f;     // 0.5f = filtracja derr  (0..1)
+
+// paramaters
+const int   DRIVE_SPEED      = 120;
+const int   DRIVE_BASE_SPEED = 80;
+const int   DRIVE_MAX_SPEED  = 200;
+
+// system state 
+const uint32_t  HOLD_MS     = 300;   // po 0.3 s bez piłki -> STOP  ile czasu po ostatniej detekcji jeszcze ufamy staremu wynikowi
+static uint32_t lastSeenMs  = 0;
+static bool     haveTarget  = false;
+static float    errFilt     = 0.0f;
+static float    prevErr     = 0.0f;
+static float    derrFilt    = 0.0f;
+
 
 
 // ===============================================
@@ -84,8 +110,8 @@ void setup() {
 
   #if ENABLE_PERIPHERALS
   // --- Servo, do not overwrite timers before motors configuration ---
-  servo1.begin(SERVO_PIN, SERVO_STOP_US);   // stop at the beggining (1500us)
-  servo1.setSpeed(0.6f);                    // constant forward rotation
+  //servo1.begin(SERVO_PIN, SERVO_STOP_US);   // stop at the beggining (1500us)
+  //servo1.setSpeed(0.6f);                    // constant forward rotation
   delay(100);
   
   // --- Motors + PWM on particular channels
@@ -94,6 +120,7 @@ void setup() {
   mpins.pwmB = pwmB; mpins.in1B = in1B; mpins.in2B = in2B;
   mpins.chA = 4;     mpins.chB = 5;
   motors.begin(mpins, freq, res);
+  motors.setScale(1.0f, 0.93f);
   delay(100);
 
   // --- I2C sensors initialization on GPIO5/6 (Camera has its own SCCB on 39/40) ---
@@ -103,7 +130,7 @@ void setup() {
 
   // --- VL53L0K (I2C) ---
   Serial.println("Calling tof.begin()...");
-  tof.begin(Wire);  
+  tof.begin(Wire);   
   delay(100);
 
   // --- MPU6050 (I2C) ---
@@ -153,7 +180,7 @@ void setup() {
 
   config.grab_mode = CAMERA_GRAB_LATEST; //CAMERA_GRAB_WHEN_EMPTY - to jest lżejsze
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
+  config.jpeg_quality = 12;             // po co mi to jest??
   // fb_count = 2 nie daje faktycznej korzyści przy FOMO ~150 ms
   config.fb_count = 1;   //2 - po jakimś czasie: Stack canary (cam_task)
 
@@ -165,34 +192,24 @@ void setup() {
   }
 
   sensor_t *s = esp_camera_sensor_get();
-  // initial sensors are flipped vertically and colors are a bit saturated
+  // initial sensors are flipped vertically
   if (s->id.PID == OV3660_PID) {
 
     // WATCH OUT FOR THIS!!
-    // model's training data must be with same adjustments!!!
+    // model's training data must be the same with adjustments!!!
     
     s->set_vflip(s, 1);        // flip it back        
     s->set_brightness(s, 1);   // up the brightness just a bit
-    s->set_saturation(s, 0);   // basic saturation  // bylo wczesniej na -2
+    s->set_saturation(s, 0);   // basic saturation
   }
 
   // --- Detection ---
   Detection::Config dcfg;
   dcfg.debug_nn = false;
+  dcfg.log = false;
+  dcfg.periodMs = 150;
+  dcfg.confidenceThreshold = 0.3f;
   detection.begin(dcfg);
-
-  /*
-  Detection::Config dcfg;
-  dcfg.debug_nn            = false;
-  dcfg.periodMs            = 200;   // detekcja co ~200 ms
-  dcfg.confidenceThreshold = 0.6f;  // wymagaj trochę wyższej pewności
-
-  if (!detection.begin(dcfg)) {
-      Serial.println("Detection init failed");
-  }
-
-  */
-
 
   // --- WiFi + camera server ---
   #if ENABLE_STREAM
@@ -218,31 +235,85 @@ void setup() {
 }
 
 
-// ===============================================
+
+
 void loop() {
-  uint32_t now = millis();
+    uint32_t now = millis();
 
-  // --- IMU ---
-  //imu.update();
+    // --- czujniki ---
+    tof.update();
+    detection.update();
 
-  // --- TOF ---
-  //tof.update();
+    bool gotFresh = false;
+    Detection::Result r;
 
-  // --- Encoders ---
-  //enc.update();
-
-  // --- FOMO --- 
-  detection.update();
- 
-  /*
-  if (detection.hasResult()) {
-        auto r = detection.lastResult();
-        if (r.valid) {
-            // np. sterowanie robotem po bboxie
-            // r.x, r.y, r.width, r.height, r.score
+    if (detection.hasResult()) {
+        r = detection.lastResult();
+        if (r.valid && r.score >= MIN_CONFIDENCE) {
+            gotFresh = true;
         }
     }
-  */
 
-  delay(1);
+    if (gotFresh) {
+        // mamy NOWY wynik z sieci
+        lastSeenMs = now;
+        haveTarget = true;
+
+        const float imgCenterX   = EI_CLASSIFIER_INPUT_WIDTH / 2.0f; 
+        const float calibCenterX = CALIB_CENTER_X;                   
+
+        float cx  = r.x + r.width * 0.5f;
+        float err = (cx - calibCenterX) / imgCenterX;
+        err = -err;
+
+        // --- filtracja błędu (część P) ---
+        errFilt = ALPHA_ERR * err + (1.0f - ALPHA_ERR) * errFilt;
+
+        // --- różniczka błędu (część D) ---
+        float derr = errFilt - prevErr;
+        prevErr = errFilt;
+
+        // filtracja różniczki (różniczka nie lubi szumu)
+        derrFilt = ALPHA_D * derr + (1.0f - ALPHA_D) * derrFilt;
+
+        // --- wyznaczenie sterowania PD ---
+        float turnF = KP_TURN * errFilt + KD_ERR * derrFilt;
+        int turn = (int)turnF;
+
+        // --- regulacja prędkości bazowej (bliżej – wolniej) ---
+        int base = DRIVE_SPEED;
+        if (r.width > TARGET_WIDTH) {
+            base = DRIVE_BASE_SPEED;
+        }
+
+        // --- DEAD BAND: jazda idealnie prosto ---
+        if (fabs(errFilt) < DEAD_BAND) {
+            motors.setBoth(base, base);
+        } else {
+            int left  = base - turn;
+            int right = base + turn;
+
+            // saturacja
+            if (left  > DRIVE_MAX_SPEED) left  = DRIVE_MAX_SPEED;
+            if (left  < -DRIVE_MAX_SPEED) left  = -DRIVE_MAX_SPEED;
+            if (right > DRIVE_MAX_SPEED) right = DRIVE_MAX_SPEED;
+            if (right < -DRIVE_MAX_SPEED) right = -DRIVE_MAX_SPEED;
+
+            motors.setBoth(left, right);
+        } 
+    }
+
+    else {
+        // brak nowej pewnej detekcji
+        if (haveTarget && (now - lastSeenMs) < HOLD_MS) {
+            // trzymamy poprzednie sterowanie
+        } else {
+            haveTarget = false;
+            motors.stop(false);
+            // ewentualnie tryb search:
+            // motors.setBoth(-30, +30);
+        }
+    }
+
+    delay(10);
 }

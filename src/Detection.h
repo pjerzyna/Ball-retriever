@@ -6,9 +6,10 @@
 class Detection {
 public:
     struct Config {
-        bool     debug_nn           = false;  // przekazywane do run_classifier (wewnętrzny debug EI)
-        uint32_t periodMs           = 0;      // co ile ms robić detekcję w update(); 0 = za każdym razem
-        float    confidenceThreshold = 0.5f;  // próg pewności, od którego wynik uznajemy za ważny
+        bool     debug_nn           = false;    // przekazywane do run_classifier (wewnętrzny debug EI)
+        bool     log                = false;
+        uint32_t periodMs           = 150;      // co ile ms robić detekcję w update(); 0 = za każdym razem
+        float    confidenceThreshold = 0.6f;    // próg pewności, od którego wynik uznajemy za ważny
     };
 
     // Wynik „wysokopoziomowy” – wyciągnięty z ei_impulse_result_t
