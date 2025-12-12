@@ -116,7 +116,7 @@ static size_t jpg_encode_stream(void *arg, size_t index, const void *data, size_
   return len;
 }
 
-// capture - referencja na glowna logike 
+// capture - reference to main logic (delete this)
 static esp_err_t capture_handler(httpd_req_t *req) {
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
@@ -172,7 +172,7 @@ static esp_err_t capture_handler(httpd_req_t *req) {
 }
 
 
-// stream - referencja na glowna logike
+// stream - reference to main logic
 static esp_err_t stream_handler(httpd_req_t *req) {
   camera_fb_t *fb = NULL;
   struct timeval _timestamp;
@@ -266,7 +266,7 @@ static esp_err_t stream_handler(httpd_req_t *req) {
 }
 
 
-// status - referencja na glowna logike
+// status - reference to main logic
 static int print_reg(char *p, sensor_t *s, uint16_t reg, uint32_t mask) {
   return sprintf(p, "\"0x%x\":%u,", reg, s->get_reg(s, reg, mask));
 }
@@ -348,7 +348,7 @@ static esp_err_t status_handler(httpd_req_t *req) {
 
 
 
-// wystartowanie serwera ze streamem
+// starting the server with stream
 void startCameraServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.max_uri_handlers = 6;
@@ -395,7 +395,7 @@ void startCameraServer() {
 #endif
   };
 
-  // logi FPS
+  // FPS logs
   ra_filter_init(&ra_filter, 20);
 
   log_i("Starting web server on port: '%d'", config.server_port);

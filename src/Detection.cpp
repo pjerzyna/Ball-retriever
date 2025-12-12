@@ -4,26 +4,26 @@
 #include "esp_camera.h"
 #include "edge-impulse-sdk/dsp/image/image.hpp"
 
-// parametry bufora kamery (zgodnie z Twoją konfiguracją)
+// camera buffer parameters
 #define EI_CAMERA_RAW_FRAME_BUFFER_COLS   240
 #define EI_CAMERA_RAW_FRAME_BUFFER_ROWS   240
 #define EI_CAMERA_FRAME_BYTE_SIZE         3   // RGB888
 
-// duży bufor na pełny obraz RGB888 (po konwersji z RGB565)
-// (globalne w tym pliku, nie na stosie)
+// large buffer for full RGB888 image (after conversion from RGB565)
+// global in this file, not on the stack
 static uint8_t snapshot_buf[EI_CAMERA_RAW_FRAME_BUFFER_COLS *
                             EI_CAMERA_RAW_FRAME_BUFFER_ROWS *
                             EI_CAMERA_FRAME_BYTE_SIZE];
 
-// bufor na zeskalowany obraz 96x96 RGB888
+// buffer for the rescaled image 96x96 RGB888
 static uint8_t resized_buf[EI_CLASSIFIER_INPUT_WIDTH *
                            EI_CLASSIFIER_INPUT_HEIGHT *
                            EI_CAMERA_FRAME_BYTE_SIZE];
 
-// EI będzie stąd czytał dane
+// EI will read data from here
 int Detection::eiCameraGetData(size_t offset, size_t length, float *out_ptr)
 {
-    // offset i length są w "pikselach", każdy piksel to 24b: RRGGBB
+    // offset and length are in "pixels", each pixel is 24b: RRGGBB
     size_t pixel_ix    = offset * 3;
     size_t pixels_left = length;
     size_t out_ix      = 0;
@@ -33,7 +33,7 @@ int Detection::eiCameraGetData(size_t offset, size_t length, float *out_ptr)
         uint8_t g = resized_buf[pixel_ix + 1];
         uint8_t b = resized_buf[pixel_ix + 2];
 
-        // pakujemy RGB w jedno 24-bitowe słowo (jak w Twojej wersji)
+        // we pack RGB into one 24-bit word
         out_ptr[out_ix] = (float)((r << 16) | (g << 8) | b);
 
         out_ix++;
@@ -49,7 +49,7 @@ bool Detection::begin(const Config& cfg)
     _hasResult   = false;
     _lastRunMs   = 0;
 
-    // kamera jest inicjalizowana w main.cpp; tutaj mógłbyś dodać sanity-checki
+    // camera is initialized in main.cpp
     return true;
 }
 
@@ -59,11 +59,11 @@ void Detection::update()
         return;
     }
 
-    // prosty scheduler na millis() – jeśli ustawiono periodMs
+    // simple scheduler on millis() if periodMs is set
     if (_cfg.periodMs > 0) {
         uint32_t now = millis();
         if ((uint32_t)(now - _lastRunMs) < _cfg.periodMs) {
-            return; // jeszcze za wcześnie
+            return; // not yet
         }
         _lastRunMs = now;
     }
@@ -92,19 +92,19 @@ bool Detection::runOnce()
 
 bool Detection::runInferenceOnce(Result& out)
 {
-    out = Result{}; // wyzeruj wynik
+    out = Result{}; // reset the result
 
-    // pobierz ramkę z kamery (RGB565 240x240 z Twojej konfiguracji)
+    // download camera frame (configuration: RGB565 240x240)
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
         ei_printf("Camera capture failed\n");
         return false;
     }
 
-    // konwersja z RGB565 do RGB888 do dużego bufora snapshot_buf
+    // conversion from RGB565 to RGB888 to large snapshot_buf buffer
     bool converted = fmt2rgb888(fb->buf, fb->len, PIXFORMAT_RGB565, snapshot_buf);
 
-    // ramkę ODDAJEMY jak najszybciej
+    // we return the frame ASAP
     esp_camera_fb_return(fb);
 
     if (!converted) {
@@ -112,7 +112,7 @@ bool Detection::runInferenceOnce(Result& out)
         return false;
     }
 
-    // przeskalowanie z 240x240 do 96x96
+    // rescaling from 240x240 to 96x96
     ei::image::processing::crop_and_interpolate_rgb888(
         snapshot_buf,
         EI_CAMERA_RAW_FRAME_BUFFER_COLS,
@@ -121,7 +121,7 @@ bool Detection::runInferenceOnce(Result& out)
         EI_CLASSIFIER_INPUT_WIDTH,
         EI_CLASSIFIER_INPUT_HEIGHT);
 
-    // sygnał dla EI (będzie czytał przez eiCameraGetData)
+    // signal for EI (will be read via eiCameraGetData)
     ei::signal_t signal;
     signal.total_length = EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT;
     signal.get_data     = &Detection::eiCameraGetData;
@@ -175,7 +175,7 @@ bool Detection::runInferenceOnce(Result& out)
         out.height = bestH;
     }
 
-#else   // klasyfikacja 1D, gdybyś kiedyś zmienił model
+#else   // 1D classification
 
     ei_printf("Predictions:\r\n");
     float bestScore = _cfg.confidenceThreshold;
@@ -196,7 +196,7 @@ bool Detection::runInferenceOnce(Result& out)
     if (found) {
         out.valid = true;
         out.score = bestScore;
-        // współrzędne zostają 0 – w klasyfikacji nie mają sensu
+        // the coordinates remain 0 , in classification they make no sense
     }
 
 #endif

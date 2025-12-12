@@ -2,14 +2,14 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <Arduino.h>
-#include "img_converters.h" //?
+#include "img_converters.h"   //? chyba mozna usunac
 #include "board_config.h"
 #include <ImuMPU.h>
 #include <Motors.h>
 #include <Servo360.h>
 #include <TofVL53.h>
 #include <Encoders.h>
-#include "Detection.h"  //dodac pozniej do bibliotek w /lib
+#include "Detection.h"      //dodac pozniej do bibliotek w /lib
 
 
 #define ENABLE_PERIPHERALS 1
@@ -71,27 +71,27 @@ void setupLedFlash();
 // ===============================================
 Detection detection;
 
-// parametry detekcji
-const uint16_t TARGET_WIDTH          = 20;     // "duża" piłka => blisko, trzeba zwalniać
-const float CALIB_CENTER_X           = 52.0f;  // skalibrowany środek - na podstawie lokalizacji kamerki na moim robocie
+// detection parameters
+const uint16_t TARGET_WIDTH          = 20;     // big piłka => close, need to slow down
+const float CALIB_CENTER_X           = 52.0f;  // calibrated center - based on the camera location on my robot
 const float MIN_CONFIDENCE           = 0.4f;
 const int EI_CLASSIFIER_INPUT_WIDTH  = 96;
 const int EI_CLASSIFIER_INPUT_HEIGHT = 96;
 
-// parametry sterowania PD
+// PD control parameters
 const float KP_TURN   = 35.0f;    // 25.0f
 const float KD_ERR    = 8;        // 6
 const float DEAD_BAND = 0.14f;    // 0.14f
-const float ALPHA_ERR = 0.6f;     // 0.5f = filtracja błędu (0..1)
-const float ALPHA_D   = 0.4f;     // 0.5f = filtracja derr  (0..1)
+const float ALPHA_ERR = 0.6f;     // 0.5f = error filtration (0..1)
+const float ALPHA_D   = 0.4f;     // 0.5f = derr filtration  (0..1)
 
-// paramaters
+// drive paramaters
 const int   DRIVE_SPEED      = 120;
 const int   DRIVE_BASE_SPEED = 80;
 const int   DRIVE_MAX_SPEED  = 200;
 
 // system state 
-const uint32_t  HOLD_MS     = 300;   // po 0.3 s bez piłki -> STOP  ile czasu po ostatniej detekcji jeszcze ufamy staremu wynikowi
+const uint32_t  HOLD_MS     = 300;   // how long after the last detection do we still trust the old result: 0.3 s without a ball => STOP
 static uint32_t lastSeenMs  = 0;
 static bool     haveTarget  = false;
 static float    errFilt     = 0.0f;
@@ -235,7 +235,7 @@ void setup() {
 }
 
 
-
+// czujnik odleglosci nie jest nigdzie wykorzystywany, zbieranie danych i wizualizacje zrobie jutro
 
 void loop() {
     uint32_t now = millis();
@@ -255,7 +255,7 @@ void loop() {
     }
 
     if (gotFresh) {
-        // mamy NOWY wynik z sieci
+        // NEW result from the network
         lastSeenMs = now;
         haveTarget = true;
 
@@ -266,34 +266,34 @@ void loop() {
         float err = (cx - calibCenterX) / imgCenterX;
         err = -err;
 
-        // --- filtracja błędu (część P) ---
+        // --- error filtration (part P)---
         errFilt = ALPHA_ERR * err + (1.0f - ALPHA_ERR) * errFilt;
 
-        // --- różniczka błędu (część D) ---
+        // --- error differential (part D) ---
         float derr = errFilt - prevErr;
         prevErr = errFilt;
 
-        // filtracja różniczki (różniczka nie lubi szumu)
+        // differential filtering (differential does not like noise)
         derrFilt = ALPHA_D * derr + (1.0f - ALPHA_D) * derrFilt;
 
-        // --- wyznaczenie sterowania PD ---
+        // --- determination of PD control ---
         float turnF = KP_TURN * errFilt + KD_ERR * derrFilt;
         int turn = (int)turnF;
 
-        // --- regulacja prędkości bazowej (bliżej – wolniej) ---
+        // --- base speed adjustment ---
         int base = DRIVE_SPEED;
         if (r.width > TARGET_WIDTH) {
             base = DRIVE_BASE_SPEED;
         }
 
-        // --- DEAD BAND: jazda idealnie prosto ---
+        // --- DEAD BAND: driving perfectly straight ---
         if (fabs(errFilt) < DEAD_BAND) {
             motors.setBoth(base, base);
         } else {
             int left  = base - turn;
             int right = base + turn;
 
-            // saturacja
+            // saturation
             if (left  > DRIVE_MAX_SPEED) left  = DRIVE_MAX_SPEED;
             if (left  < -DRIVE_MAX_SPEED) left  = -DRIVE_MAX_SPEED;
             if (right > DRIVE_MAX_SPEED) right = DRIVE_MAX_SPEED;
@@ -304,13 +304,13 @@ void loop() {
     }
 
     else {
-        // brak nowej pewnej detekcji
+        // no new reliable detection
         if (haveTarget && (now - lastSeenMs) < HOLD_MS) {
-            // trzymamy poprzednie sterowanie
+            // we keep the previous control
         } else {
             haveTarget = false;
             motors.stop(false);
-            // ewentualnie tryb search:
+            // optionally search mode:
             // motors.setBoth(-30, +30);
         }
     }

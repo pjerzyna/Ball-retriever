@@ -2,21 +2,21 @@
 
 #include <Arduino.h>
 
-// Prosta klasa obsługująca detekcję FOMO z Edge Impulse
+// A simple class that handles FOMO detection with Edge Impulse
 class Detection {
 public:
     struct Config {
-        bool     debug_nn           = false;    // przekazywane do run_classifier (wewnętrzny debug EI)
+        bool     debug_nn           = false;    // passed to run_classifier (internal EI debug)
         bool     log                = false;
-        uint32_t periodMs           = 150;      // co ile ms robić detekcję w update(); 0 = za każdym razem
-        float    confidenceThreshold = 0.6f;    // próg pewności, od którego wynik uznajemy za ważny
+        uint32_t periodMs           = 150;      // every how many ms to do detection in update(); 0 means every time
+        float    confidenceThreshold = 0.6f;    // the threshold from which the result is considered valid
     };
 
-    // Wynik „wysokopoziomowy” – wyciągnięty z ei_impulse_result_t
+    // High-level result - extracted from ei_impulse_result_t
     struct Result {
-        bool     valid     = false;  // czy jest jakaś detekcja powyżej progu
-        float    score     = 0.0f;   // pewność (0..1)
-        uint16_t x         = 0;      // współrzędne bboxa (w pikselach wejścia EI, np. 96x96)
+        bool     valid     = false;  // Is there any detection above the threshold
+        float    score     = 0.0f;   // certainty (0..1)
+        uint16_t x         = 0;      // bbox coordinates (in EI input pixels, 96x96)
         uint16_t y         = 0;
         uint16_t width     = 0;
         uint16_t height    = 0;
@@ -24,25 +24,25 @@ public:
 
     Detection() = default;
 
-    // inicjalizacja – zakładamy, że kamera jest już skonfigurowana w main.cpp
+    // initialization, the camera is already configured in main.cpp
     bool begin(const Config& cfg);
 
-    // wołasz w loop() – wewnętrznie pilnuje periodMs (jeśli > 0)
+    // internally keeps track of periodMs (if > 0)
     void update();
 
-    // wymusza natychmiastowe wykonanie jednej detekcji (ignoruje periodMs)
-    // zwraca true, jeśli inference się udał (niekoniecznie, że coś wykryto)
+    // forces immediate execution of one detection (ignores periodMs)
+    // returns true if the inference was successful (not necessarily that something was detected)
     bool runOnce();
 
-    // dostęp do ostatniego wyniku
+    // access to the latest result
     bool   hasResult()   const { return _hasResult; }
     Result lastResult()  const { return _lastResult; }
 
 private:
-    // właściwy pipeline: pobranie klatki + EI + wyciągnięcie najlepszego bboxa
+    // pipeline: frame grab + EI + best bbox extraction
     bool runInferenceOnce(Result& out);
 
-    // callback dla Edge Impulse (statyczny, bez this)
+    // callback for Edge Impulse (static, without this)
     static int eiCameraGetData(size_t offset, size_t length, float *out_ptr);
 
     Config   _cfg{};
