@@ -105,8 +105,11 @@ static float    derrFilt    = 0.0f;
 // ===============================================
 struct LogSample {
   uint32_t tMs;
+  
   float ax_g, ay_g, az_g;
   float gz_dps;
+  uint32_t pL, pR;   // impulsy w tym oknie (delta_pulses)
+  float vL, vR;      // [m/s] (na krok logowania)
 };
 
 const size_t   LOG_SAMPLES_MAX = 1000;      // ~40 kB RAM (mam 93kB wolnego RAMu)
@@ -227,18 +230,21 @@ String makeLogPath() {
 }
 
 // zapisanie danych z ram do pamieci flash za pomoca przycisku B lub klawisz 's' na klawiaturze
-bool saveImuLogToFlash() {
+bool saveLogToFlash() {
   if (!fsOk) return false;
 
   String path = makeLogPath();
   File f = LittleFS.open(path, "w");
   if (!f) { Serial.println("ERR: open failed"); return false; }
 
-  f.println("t_ms,ax_g,ay_g,az_g,gz_dps");
+  f.println("t_ms,ax_g,ay_g,az_g,gz_dps,pL,pR,vL,vR");
   for (size_t i = 0; i < logIndex; i++) {
     const auto &s = logBuf[i];
-    f.printf("%lu,%.6f,%.6f,%.6f,%.6f\n",
-             (unsigned long)s.tMs, s.ax_g, s.ay_g, s.az_g, s.gz_dps);
+    f.printf("%lu,%.6f,%.6f,%.6f,%.6f,%lu,%lu,%.4f,%.4f\n",
+             (unsigned long)s.tMs, 
+             s.ax_g, s.ay_g, s.az_g, s.gz_dps, 
+             (unsigned long)s.pL, (unsigned long)s.pR,
+              s.vL, s.vR);
   }
   f.close();
   Serial.print("OK: saved "); Serial.println(path);
@@ -395,6 +401,7 @@ void loop() {
 
     // --- czujniki ---
     imu.update();
+    enc.update();
     detection.update();
 
     #if ENABLE_SAVING_DATA
@@ -403,7 +410,7 @@ void loop() {
     bool button_status = digitalRead(BTN_PIN);
     if (last == HIGH && button_status == LOW) {   // zbocze: klik
       Serial.println("BTN: save log");
-      saveImuLogToFlash();
+      saveLogToFlash();
     }
     last = button_status;
 
@@ -425,7 +432,7 @@ void loop() {
 
         if (c == 's') {                 // (not automatic) save RAM -> Flash
           loggingActive = false;
-          bool ok = saveImuLogToFlash();
+          bool ok = saveLogToFlash();
           Serial.println(ok ? "OK" : "ERR");
         }
     }
@@ -507,15 +514,22 @@ void loop() {
     }
 
     #if ENABLE_SAVING_DATA
-    // --- LOGOWANIE IMU ---
-    if (loggingActive && now - lastLogMs >= LOG_PERIOD_MS && logIndex < LOG_SAMPLES_MAX) {
+    // --- LOGOWANIE IMU + Encoders---
+    if (loggingActive && (now - lastLogMs >= LOG_PERIOD_MS) && (logIndex < LOG_SAMPLES_MAX)) {
       lastLogMs = now;
+
       LogSample &s = logBuf[logIndex++];
       s.tMs    = now;
+      
       s.ax_g   = imu.ax_g();
       s.ay_g   = imu.ay_g();
       s.az_g   = imu.az_g();
       s.gz_dps = imu.gz_dps();
+
+      s.pL     = enc.pulsesL();
+      s.pR     = enc.pulsesR();
+      s.vL     = enc.vL();
+      s.vR     = enc.vR();
     }
     #endif
 
