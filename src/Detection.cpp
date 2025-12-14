@@ -23,7 +23,7 @@ static uint8_t resized_buf[EI_CLASSIFIER_INPUT_WIDTH *
 // EI will read data from here
 int Detection::eiCameraGetData(size_t offset, size_t length, float *out_ptr)
 {
-    // offset and length are in "pixels", each pixel is 24b: RRGGBB
+    // offset and length are in pixels, each pixel is 24b: RRGGBB
     size_t pixel_ix    = offset * 3;
     size_t pixels_left = length;
     size_t out_ix      = 0;

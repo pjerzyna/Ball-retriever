@@ -7,12 +7,16 @@ public:
     uint8_t pinL;
     uint8_t pinR;
     bool usePullup = false;          // LM393 has pull-up
-    float pulsesPerRevL = 20.0f;
-    float pulsesPerRevR = 20.0f;
-    uint32_t minPulseUs = 200;       // time filter between impulses
-    uint32_t reportMs = 500;       
+    // Disc has 20 slots, and ISR triggers on FALLING edges.
+  // In theory this could give ~20 pulses/rev (one edge per slot),
+  // but in practice the opto+LM393 waveform and edge detection produce a different
+  // effective count. Calibrated on real wheel rotations during motion.
+    float pulsesPerRevL = 22.0f;     // effective pulses per wheel revolution (measured)
+    float pulsesPerRevR = 22.0f;  
+    uint32_t minPulseUs = 200;       // time filter between impulses 200=0.2ms
+    uint32_t reportMs = 500;         // 2 Hz
 
-    float wheelRadius_m = 0.0125f;
+    float wheelRadius_m = 0.032f;  // 0.0125f radius of slot wheel; 0.032 radius of normal wheel with a tire
   };
 
   bool begin(const Config& cfg);
