@@ -9,39 +9,55 @@ void LogConsole::begin(const Config& cfg, TelemetryLogger& logger, Stream& io) {
   if (_cfg.useButton) {
     pinMode(_cfg.btnPin, INPUT_PULLUP);
     _lastRawBtn = digitalRead(_cfg.btnPin);
-    _stableBtn  = _lastRawBtn;
-    _lastDebounceMs = millis();
+    // _stableBtn  = _lastRawBtn;
+    // _lastDebounceMs = millis();
   }
 }
 
 void LogConsole::update() {
   if (!_logger || !_io) return;
 
+  // // =========================
+  // // Button: edge + debounce
+  // // =========================
+  // if (_cfg.useButton) {
+  //   bool raw = digitalRead(_cfg.btnPin);
+
+  //   if (raw != _lastRawBtn) {
+  //     _lastRawBtn = raw;
+  //     _lastDebounceMs = millis();
+  //   }
+
+  //   if ((millis() - _lastDebounceMs) >= _cfg.debounceMs) {
+  //     if (raw != _stableBtn) {
+  //       _stableBtn = raw;
+
+  //       // falling edge => click
+  //       if (_stableBtn == LOW) {
+  //         _logger->stop();
+  //         //_io->println("BTN: save log");
+  //         bool ok = _logger->saveToFlash();
+  //         _io->println(ok ? "OK" : "ERR");
+  //       }
+  //     }
+  //   }
+  // }
+
   // =========================
-  // Button: edge + debounce
+  // Button: simple edge (no debounce)
   // =========================
   if (_cfg.useButton) {
     bool raw = digitalRead(_cfg.btnPin);
 
-    if (raw != _lastRawBtn) {
-      _lastRawBtn = raw;
-      _lastDebounceMs = millis();
+    // falling edge: HIGH -> LOW
+    if (_lastRawBtn == HIGH && raw == LOW) {
+      _logger->stop();
+      bool ok = _logger->saveToFlash();
     }
 
-    if ((millis() - _lastDebounceMs) >= _cfg.debounceMs) {
-      if (raw != _stableBtn) {
-        _stableBtn = raw;
-
-        // falling edge => click
-        if (_stableBtn == LOW) {
-          _logger->stop();
-          _io->println("BTN: save log");
-          bool ok = _logger->saveToFlash();
-          _io->println(ok ? "OK" : "ERR");
-        }
-      }
-    }
+    _lastRawBtn = raw;
   }
+
 
   // =========================
   // Serial commands

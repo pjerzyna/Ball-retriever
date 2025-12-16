@@ -7,7 +7,7 @@ public:
   struct Config {
     int btnPin = 0;
     bool useButton = true;
-    uint32_t debounceMs = 30;   // <-- dodane
+    // uint32_t debounceMs = 30;
   };
 
   void begin(const Config& cfg, TelemetryLogger& logger, Stream& io);
@@ -18,7 +18,7 @@ private:
   TelemetryLogger* _logger = nullptr;
   Stream* _io = nullptr;
 
-  bool _lastRawBtn = true;      // <-- zmiana nazwy (czytelniej)
-  bool _stableBtn  = true;      // <-- dodane
-  uint32_t _lastDebounceMs = 0; // <-- dodane
+  bool _lastRawBtn = true;    
+  // bool _stableBtn  = true;      
+  // uint32_t _lastDebounceMs = 0; 
 };

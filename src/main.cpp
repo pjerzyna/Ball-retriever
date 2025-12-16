@@ -17,8 +17,8 @@
 #define ENABLE_PERIPHERALS 1
 #define ENABLE_STREAM 0
 // zapisywania danych uzywac tylko wtedy kiedy wylaczony jest stream, bo inaczej robocik nie wyrabia
-#define ENABLE_SAVING_DATA 1
-#define ENABLE_DETECTION 0
+#define ENABLE_SAVING_DATA 0
+#define ENABLE_DETECTION 1
 
 // ===========================
 // WiFi
@@ -111,6 +111,17 @@ const int BTN_PIN = 0;   // BOOT/B button to manually save data
 TelemetryLogger logger;
 LogConsole console;
 
+
+// ===============================================
+// FSM
+// ===============================================
+enum class State : uint8_t {
+  CHASE,
+  CAPTURED
+};
+
+static State state = State::CHASE;
+static State prevState = (State)255;
 
 
 
@@ -232,12 +243,12 @@ void setup() {
 
   // --- Detection ---
   #if ENABLE_DETECTION
-  Detection::Config dcfg;
-  dcfg.debug_nn = false;
-  dcfg.log = false;
-  dcfg.periodMs = 150;
-  dcfg.confidenceThreshold = 0.3f;
-  detection.begin(dcfg);
+    Detection::Config dcfg;
+    dcfg.debug_nn = false;
+    dcfg.log = false;
+    dcfg.periodMs = 150;
+    dcfg.confidenceThreshold = 0.4f;
+    detection.begin(dcfg);
   #endif
 
   // --- WiFi + camera server ---
@@ -263,108 +274,105 @@ void setup() {
 
 }
 
+#if ENABLE_DETECTION
+static void stepChase(uint32_t now) {
+  // --- FOMO result ---
+  bool gotFresh = false;
+  Detection::Result r;
 
-// czujnik odleglosci nie jest nigdzie wykorzystywany!!!
+  if (detection.hasResult()) {
+      r = detection.lastResult();
+      if (r.valid && r.score >= MIN_CONFIDENCE) {
+          gotFresh = true;
+      }
+  }
+
+  // --- sterowanie + start przejazdu ---
+  if (gotFresh) {
+      // NEW result from the network
+      lastSeenMs = now;
+      haveTarget = true;
+
+      const float imgCenterX   = EI_CLASSIFIER_INPUT_WIDTH / 2.0f; 
+      const float calibCenterX = CALIB_CENTER_X;                   
+
+      float cx  = r.x + r.width * 0.5f;
+      float err = (cx - calibCenterX) / imgCenterX;
+      err = -err;
+
+      // --- error filtration (part P)---
+      errFilt = ALPHA_ERR * err + (1.0f - ALPHA_ERR) * errFilt;
+
+      // --- error differential (part D) ---
+      float derr = errFilt - prevErr;
+      prevErr = errFilt;
+
+      // differential filtering (differential does not like noise)
+      derrFilt = ALPHA_D * derr + (1.0f - ALPHA_D) * derrFilt;
+
+      // --- determination of PD control ---
+      float turnF = KP_TURN * errFilt + KD_ERR * derrFilt;
+      int turn = (int)turnF;
+
+      // --- base speed adjustment ---
+      int base = DRIVE_SPEED;
+      if (r.width > TARGET_WIDTH) {
+          base = DRIVE_BASE_SPEED;
+      }
+
+      // --- DEAD BAND: driving perfectly straight ---
+      if (fabs(errFilt) < DEAD_BAND) {
+          motors.setBoth(base, base);
+      } else {
+          int left  = base - turn;
+          int right = base + turn;
+
+          // saturation
+          if (left  > DRIVE_MAX_SPEED) left  = DRIVE_MAX_SPEED;
+          if (left  < -DRIVE_MAX_SPEED) left  = -DRIVE_MAX_SPEED;
+          if (right > DRIVE_MAX_SPEED) right = DRIVE_MAX_SPEED;
+          if (right < -DRIVE_MAX_SPEED) right = -DRIVE_MAX_SPEED;
+
+          motors.setBoth(left, right);
+      } 
+  }
+
+  else {
+      // no new reliable detection
+      if (haveTarget && (now - lastSeenMs) < HOLD_MS) {
+          // we keep the previous control
+      } else {
+          haveTarget = false;
+          motors.stop();
+          // optionally search mode:
+          // motors.setBoth(-30, +30);
+      }
+  }
+}
+#endif
 
 void loop() {
-    uint32_t now = millis();
+  const uint32_t now = millis();
 
-    // --- peripherals ---
-    imu.update();
-    enc.update();
-    //detection.update();
+  // --- peripherals ---
+  imu.update();
+  enc.update();
 
+  #if ENABLE_DETECTION
+    detection.update();  
+    stepChase(now);         
+  #else
+    motors.stop();        
+  #endif
 
-
-    #if ENABLE_DETECTION
-    // --- FOMO result ---
-    bool gotFresh = false;
-    Detection::Result r;
-
-    if (detection.hasResult()) {
-        r = detection.lastResult();
-        if (r.valid && r.score >= MIN_CONFIDENCE) {
-            gotFresh = true;
-        }
-    }
-
-    // --- sterowanie + start przejazdu ---
-    if (gotFresh) {
-        // NEW result from the network
-        lastSeenMs = now;
-        haveTarget = true;
-
-        const float imgCenterX   = EI_CLASSIFIER_INPUT_WIDTH / 2.0f; 
-        const float calibCenterX = CALIB_CENTER_X;                   
-
-        float cx  = r.x + r.width * 0.5f;
-        float err = (cx - calibCenterX) / imgCenterX;
-        err = -err;
-
-        // --- error filtration (part P)---
-        errFilt = ALPHA_ERR * err + (1.0f - ALPHA_ERR) * errFilt;
-
-        // --- error differential (part D) ---
-        float derr = errFilt - prevErr;
-        prevErr = errFilt;
-
-        // differential filtering (differential does not like noise)
-        derrFilt = ALPHA_D * derr + (1.0f - ALPHA_D) * derrFilt;
-
-        // --- determination of PD control ---
-        float turnF = KP_TURN * errFilt + KD_ERR * derrFilt;
-        int turn = (int)turnF;
-
-        // --- base speed adjustment ---
-        int base = DRIVE_SPEED;
-        if (r.width > TARGET_WIDTH) {
-            base = DRIVE_BASE_SPEED;
-        }
-
-        // --- DEAD BAND: driving perfectly straight ---
-        if (fabs(errFilt) < DEAD_BAND) {
-            motors.setBoth(base, base);
-        } else {
-            int left  = base - turn;
-            int right = base + turn;
-
-            // saturation
-            if (left  > DRIVE_MAX_SPEED) left  = DRIVE_MAX_SPEED;
-            if (left  < -DRIVE_MAX_SPEED) left  = -DRIVE_MAX_SPEED;
-            if (right > DRIVE_MAX_SPEED) right = DRIVE_MAX_SPEED;
-            if (right < -DRIVE_MAX_SPEED) right = -DRIVE_MAX_SPEED;
-
-            motors.setBoth(left, right);
-        } 
-    }
-
-    else {
-        // no new reliable detection
-        if (haveTarget && (now - lastSeenMs) < HOLD_MS) {
-            // we keep the previous control
-        } else {
-            haveTarget = false;
-            motors.stop();
-            // optionally search mode:
-            // motors.setBoth(-30, +30);
-        }
-    }
-    #endif
-
-    #if ENABLE_SAVING_DATA
-    // logowanie: main tylko przekazuje dane
+  #if ENABLE_SAVING_DATA
     logger.tick(now,
-                  imu.ax_g(), imu.ay_g(), imu.az_g(),
-                  imu.gz_dps(),
-                  enc.pulsesL(), enc.pulsesR(),
-                  enc.vL(), enc.vR());
-
+                imu.ax_g(), imu.ay_g(), imu.az_g(),
+                imu.gz_dps(),
+                enc.pulsesL(), enc.pulsesR(),
+                enc.vL(), enc.vR());
     console.update();
-    #endif
+  #endif
 
-
-
-
-
-    delay(1);
+  delay(10);
 }
