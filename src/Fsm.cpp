@@ -21,39 +21,57 @@ void Fsm::begin(Motors& motors, Detection& detection, const Config& cfg) {
   _derrFilt = 0.0f;
 
   _lastDbgMs = 0;
+
+  _idleSinceMs = 0;
+  _armedCaptured = false;
 }
 
 void Fsm::setState(State s) {
   _state = s;
-  _prev  = (State)255; // wymuś “pierwsze wejście” w update()
+  _prev  = (State)255;
 }
 
 void Fsm::update(uint32_t now) {
   if (!_motors || !_det) return;
 
-  // transition print (raz)
   if (_state != _prev) {
     if (_cfg.printTransitions) {
       const char* name =
-        (_state == State::IDLE)  ? "IDLE" :
-        (_state == State::CHASE) ? "CHASE" : "?";
+        (_state == State::IDLE)     ? "IDLE" :
+        (_state == State::CHASE)    ? "CHASE" :
+        (_state == State::CAPTURED) ? "CAPTURED" : "?";
       Serial.print("[FSM] -> ");
       Serial.print(name);
       Serial.print("  t=");
       Serial.println(now);
     }
+
+    // "on-enter" akcje stanów
+    if (_state == State::IDLE) {
+      _idleSinceMs = now;
+    }
+
     _prev = _state;
   }
 
   switch (_state) {
-    case State::IDLE:  stepIdle(now);  break;
-    case State::CHASE: stepChase(now); break;
+    case State::IDLE:     stepIdle(now);     break;
+    case State::CHASE:    stepChase(now);    break;
+    case State::CAPTURED: stepCaptured(now); break;
   }
 }
 
 void Fsm::stepIdle(uint32_t now) {
-  (void)now;
   _motors->stop();
+
+  // IDLE -> CAPTURED po czasie, ale tylko jeśli "uzbrojone" (żeby nie złapało na starcie)
+  if (_cfg.idleToCapturedMs > 0) {
+    const bool armedOk = (!_cfg.idleCapturedRequiresChase) || _armedCaptured;
+    if (armedOk && _idleSinceMs != 0 && (now - _idleSinceMs) >= _cfg.idleToCapturedMs) {
+      transition(State::CAPTURED, now);
+      return;
+    }
+  }
 
   // IDLE -> CHASE, jeśli pojawi się sensowna detekcja
   bool gotFresh = false;
@@ -81,17 +99,18 @@ void Fsm::stepChase(uint32_t now) {
     _lastSeenMs = now;
     _haveTarget = true;
 
+    // uzbrój CAPTURED, bo realnie goniliśmy cel
+    _armedCaptured = true;
+
     const float imgCenterX   = _cfg.nnWidth / 2.0f;
     const float calibCenterX = _cfg.calibCenterX;
 
     float cx  = r.x + r.width * 0.5f;
     float err = (cx - calibCenterX) / imgCenterX;
-    err = -err; // u Ciebie tak było
+    err = -err;
 
-    // filtr P
     _errFilt = _cfg.alphaErr * err + (1.0f - _cfg.alphaErr) * _errFilt;
 
-    // D (z filtrowaniem)
     float derr = _errFilt - _prevErr;
     _prevErr = _errFilt;
     _derrFilt = _cfg.alphaD * derr + (1.0f - _cfg.alphaD) * _derrFilt;
@@ -100,7 +119,7 @@ void Fsm::stepChase(uint32_t now) {
     int turn = (int)turnF;
 
     int base = _cfg.driveSpeed;
-    if (r.width > _cfg.targetWidth) base = _cfg.driveBaseSpeed;
+    if (r.width > _cfg.targetWidth) base = _cfg.driveBaseSpeed; // jeśli chcesz, zostaw; jak nie chcesz, wywal
 
     if (fabs(_errFilt) < _cfg.deadBand) {
       _motors->setBoth(base, base);
@@ -116,7 +135,6 @@ void Fsm::stepChase(uint32_t now) {
       _motors->setBoth(left, right);
     }
 
-    // debug co cfg.dbgPeriodMs
     if (_cfg.dbgPeriodMs && (now - _lastDbgMs > _cfg.dbgPeriodMs)) {
       _lastDbgMs = now;
       Serial.print("[CHASE] score="); Serial.print(r.score, 2);
@@ -131,7 +149,7 @@ void Fsm::stepChase(uint32_t now) {
   } else {
     // brak świeżej detekcji
     if (_haveTarget && (now - _lastSeenMs) < _cfg.holdMs) {
-      // jeszcze “ufamy” poprzedniemu sterowaniu (nic nie zmieniamy)
+      // trzymamy poprzednie sterowanie
     } else {
       _haveTarget = false;
       _motors->stop();
@@ -140,9 +158,13 @@ void Fsm::stepChase(uint32_t now) {
   }
 }
 
+void Fsm::stepCaptured(uint32_t now) {
+  (void)now;
+  _motors->stop(); // terminalnie: nie reaguje na nic
+}
+
 void Fsm::transition(State next, uint32_t now) {
   (void)now;
   if (next == _state) return;
   _state = next;
-  // _prev zostanie obsłużony w update()
 }

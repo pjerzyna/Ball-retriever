@@ -6,7 +6,7 @@ class Detection;
 
 class Fsm {
 public:
-  enum class State : uint8_t { IDLE, CHASE };
+  enum class State : uint8_t { IDLE, CHASE, CAPTURED };
 
   struct Config {
     // detekcja / przejścia
@@ -14,9 +14,9 @@ public:
     uint32_t holdMs        = 300;
 
     // parametry obrazu / kalibracja
-    int   nnWidth       = 96;
-    float calibCenterX  = 52.0f;
-    uint16_t targetWidth = 20;
+    int      nnWidth       = 96;
+    float    calibCenterX  = 52.0f;
+    uint16_t targetWidth   = 20;
 
     // PD
     float kpTurn   = 35.0f;
@@ -31,8 +31,12 @@ public:
     int driveMaxSpeed  = 200;
 
     // debug
-    bool printTransitions = true;
-    uint32_t dbgPeriodMs  = 200;
+    bool     printTransitions = true;
+    uint32_t dbgPeriodMs      = 200;
+
+    // IDLE -> CAPTURED (po czasie)
+    uint32_t idleToCapturedMs = 1200;   // np. 1.2s w IDLE => CAPTURED
+    bool     idleCapturedRequiresChase = true; // bezpiecznik
   };
 
   Fsm() = default;
@@ -41,30 +45,34 @@ public:
   void setState(State s);
   State state() const { return _state; }
 
-  // Wywołuj w loop() po detection.update()
   void update(uint32_t now);
 
 private:
   void stepIdle(uint32_t now);
   void stepChase(uint32_t now);
+  void stepCaptured(uint32_t now);
 
   void transition(State next, uint32_t now);
 
 private:
-  Motors* _motors = nullptr;
-  Detection* _det = nullptr;
-  Config _cfg;
+  Motors*    _motors = nullptr;
+  Detection* _det    = nullptr;
+  Config     _cfg;
 
   State _state = State::IDLE;
   State _prev  = (State)255;
 
   // CHASE runtime
-  uint32_t _lastSeenMs = 0;
-  bool     _haveTarget = false;
+  uint32_t _lastSeenMs  = 0;
+  bool     _haveTarget  = false;
 
   float _errFilt  = 0.0f;
   float _prevErr  = 0.0f;
   float _derrFilt = 0.0f;
 
   uint32_t _lastDbgMs = 0;
+
+  // IDLE timer + "armed" flag
+  uint32_t _idleSinceMs = 0;
+  bool     _armedCaptured = false;   // ustawiane po "realnym" CHASE
 };
