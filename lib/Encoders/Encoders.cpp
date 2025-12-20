@@ -22,6 +22,7 @@ void IRAM_ATTR Encoders::isrL(void* arg) {
   uint32_t now = micros();
   if (now - self->_lastUsL >= self->_cfg.minPulseUs) {
     self->_countL++;
+    self->_totalL++;
     self->_lastUsL = now;
   }
 }
@@ -31,6 +32,7 @@ void IRAM_ATTR Encoders::isrR(void* arg) {
   uint32_t now = micros();
   if (now - self->_lastUsR >= self->_cfg.minPulseUs) {
     self->_countR++;
+    self->_totalR++;
     self->_lastUsR = now;
   }
 }
@@ -40,6 +42,8 @@ void Encoders::reset() {
   noInterrupts();
   _countL = 0;
   _countR = 0;
+  //_totalL = 0; 
+  //_totalR = 0; 
   interrupts();
 }
 

@@ -39,6 +39,8 @@ public:
   // diagnostyka
   size_t samplesCount() const { return _idx; }
   size_t capacity()     const { return _max; }
+  
+  const Sample& sampleAt(size_t i) const { return _buf[i]; }
 
 private:
   String makeLogPath();

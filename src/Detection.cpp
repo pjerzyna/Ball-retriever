@@ -151,7 +151,7 @@ bool Detection::runInferenceOnce(Result& out)
         if (bb.value == 0) {
             continue;
         }
-        if (1) {
+        if (_cfg.log) {
         ei_printf("  %s (%f) [ x: %u, y: %u, width: %u, height: %u ]\r\n",
                   bb.label, bb.value, bb.x, bb.y, bb.width, bb.height);
         }

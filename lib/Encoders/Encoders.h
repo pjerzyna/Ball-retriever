@@ -14,7 +14,7 @@ public:
     float pulsesPerRevL = 22.0f;     // effective pulses per wheel revolution (measured)
     float pulsesPerRevR = 22.0f;  
     uint32_t minPulseUs = 200;       // time filter between impulses 200=0.2ms
-    uint32_t reportMs = 500;         // 2 Hz
+    uint32_t reportMs = 50;        
 
     float wheelRadius_m = 0.032f;  // 0.0125f radius of slot wheel; 0.032 radius of normal wheel with a tire
   };
@@ -35,6 +35,10 @@ public:
   uint32_t pulsesL() const { return _pulsesL; }
   uint32_t pulsesR() const { return _pulsesR; }
 
+  uint32_t totalL() const { return _totalL; }
+  uint32_t totalR() const { return _totalR; }
+
+
   void printDebug(Stream& s = Serial) const;
   void reset();
 
@@ -50,6 +54,7 @@ private:
 
   volatile uint32_t _countL = 0, _countR = 0;
   volatile uint32_t _lastUsL = 0, _lastUsR = 0;
+  volatile uint32_t _totalL = 0, _totalR = 0;
 
   float _vL = 0.0f, _vR = 0.0f; 
 
