@@ -18,7 +18,7 @@
 #define ENABLE_PERIPHERALS 1
 #define ENABLE_STREAM 0
 // zapisywania danych uzywac tylko wtedy kiedy wylaczony jest stream, bo inaczej robocik nie wyrabia
-#define ENABLE_SAVING_DATA 0
+#define ENABLE_SAVING_DATA 1 // means enable coming back with a captured item
 
 // ===========================
 // WiFi
@@ -61,8 +61,8 @@ static const uint8_t PIN_ENC_R = 43;  // right wheel
 
 static const bool ENC_USE_PULLUP = false;           // LM393 has its own pull-up
 static const unsigned long ENC_REPORT_MS = 50;      //20Hz; 500ms=2Hz
-static const float PULSES_PER_REV_L = 35.0f;        // Left shield pulses/rotation (20.0f)
-static const float PULSES_PER_REV_R = 33.0f;        // Right shield pulses/rotation (20.0f)
+static const float PULSES_PER_REV_L = 35.0f;        // Left shield pulses/rotation (22.0f)
+static const float PULSES_PER_REV_R = 33.0f;        // Right shield pulses/rotation (22.0f)
 static const unsigned long ENC_MIN_PULSE_US = 1500; // time filter (anti-vibration)
 
 // ===============================================
@@ -149,7 +149,7 @@ void setup() {
   mpins.pwmB = pwmB; mpins.in1B = in1B; mpins.in2B = in2B;
   mpins.chA = 4;     mpins.chB = 5;
   motors.begin(mpins, freq, res);
-  motors.setScale(1.0f, 0.93f);
+  motors.setScale(1.0f, 1.0f);  //1.0f, 0.93f
   delay(100);
 
   // --- I2C sensors initialization on GPIO5/6 (Camera has its own SCCB on 39/40) ---
@@ -259,7 +259,7 @@ void setup() {
   fcfg.printTransitions = true;
   fcfg.dbgPeriodMs      = 200;
 
-  fsm.begin(motors, detection, fcfg);
+  fsm.begin(motors, detection, logger, fcfg);
   fsm.setState(Fsm::State::IDLE);   // start bezpiecznie od IDLE
 
 
@@ -294,6 +294,7 @@ void loop() {
   tof.update();
   imu.update();
   enc.update();
+  fsm.setMeasuredWheelV(enc.vL(), enc.vR());
 
   detection.update();  
   fsm.update(now);         

@@ -4,10 +4,13 @@
 
 #include <Motors.h>
 #include "Detection.h"
+#include "TelemetryLogger.h"
 
-void Fsm::begin(Motors& motors, Detection& detection, const Config& cfg) {
+
+void Fsm::begin(Motors& motors, Detection& detection, TelemetryLogger& logger, const Config& cfg) {
   _motors = &motors;
   _det    = &detection;
+  _logger = &logger;
   _cfg    = cfg;
 
   _state = State::IDLE;
@@ -24,6 +27,11 @@ void Fsm::begin(Motors& motors, Detection& detection, const Config& cfg) {
 
   _idleSinceMs = 0;
   _armedCaptured = false;
+
+  _backIdx = -1;
+  _backNextMs = 0;
+  _backStartedMs = 0;
+  _wasChasing = false;
 }
 
 void Fsm::setState(State s) {
@@ -39,7 +47,9 @@ void Fsm::update(uint32_t now) {
       const char* name =
         (_state == State::IDLE)     ? "IDLE" :
         (_state == State::CHASE)    ? "CHASE" :
-        (_state == State::CAPTURED) ? "CAPTURED" : "?";
+        (_state == State::CAPTURED) ? "CAPTURED" : 
+        (_state == State::BACK)     ? "BACK" : 
+        (_state == State::HOME)     ? "HOME" : "?";
       Serial.print("[FSM] -> ");
       Serial.print(name);
       Serial.print("  t=");
@@ -58,6 +68,8 @@ void Fsm::update(uint32_t now) {
     case State::IDLE:     stepIdle(now);     break;
     case State::CHASE:    stepChase(now);    break;
     case State::CAPTURED: stepCaptured(now); break;
+    case State::BACK:     stepBack(now);     break;
+    case State::HOME:     stepHome(now);     break;
   }
 }
 
@@ -84,6 +96,11 @@ void Fsm::stepIdle(uint32_t now) {
   if (gotFresh) {
     transition(State::CHASE, now);
   }
+
+  if (_backActive) {
+  _motors->stop();
+  return;
+  }
 }
 
 void Fsm::stepChase(uint32_t now) {
@@ -98,6 +115,7 @@ void Fsm::stepChase(uint32_t now) {
   if (gotFresh) {
     _lastSeenMs = now;
     _haveTarget = true;
+    _wasChasing = true;      
 
     // uzbrój CAPTURED, bo realnie goniliśmy cel
     _armedCaptured = true;
@@ -159,12 +177,144 @@ void Fsm::stepChase(uint32_t now) {
 }
 
 void Fsm::stepCaptured(uint32_t now) {
-  (void)now;
-  _motors->stop(); // terminalnie: nie reaguje na nic
+  // Tu zakładam, że chwyt już wykonany i robot ma stan "złapane".
+  // Silniki zwykle stop:
+  //_motors->stop();
+
+  // Bezpiecznik: nie przechodź do BACK, jeśli nie było realnego CHASE
+  if (_cfg.idleCapturedRequiresChase && !_wasChasing) {
+    transition(State::IDLE, now);
+    return;
+  }
+
+  // Zatrzymaj logowanie, jeśli logujesz tylko w fazie jazdy
+  // _log->stop();
+
+  // Przygotuj BACK
+  const int32_t n = (int32_t)_logger->samplesCount();
+  if (n < 2) { // za mało danych do odtwarzania
+    transition(State::IDLE, now);
+    return;
+  }
+
+  _backIdx = n - 1;        // start od ostatniej próbki
+  _backNextMs = now;       // odtwarzamy od razu
+  _backStartedMs = now;    // start bezpiecznika
+
+  _backActive = true; //bezpiecznik
+
+  transition(State::BACK, now);
 }
+
 
 void Fsm::transition(State next, uint32_t now) {
   (void)now;
   if (next == _state) return;
   _state = next;
+}
+
+static inline int clampInt(int x, int lo, int hi) {
+  if (x < lo) return lo;
+  if (x > hi) return hi;
+  return x;
+}
+
+static inline int applyDeadband(int x, int db) {
+  if (db <= 0) return x;
+  if (x > -db && x < db) return 0;
+  return x;
+}
+
+
+void Fsm::stepBack(uint32_t now) {
+  if (now - _backStartedMs > _cfg.backMaxMs) {
+    _motors->stop(false);
+    _backActive = false;
+    transition(State::HOME, now); //IDLE
+    return;
+  }
+
+  if (_backIdx <= 0) {
+    _motors->stop(false);
+    _backActive = false;
+    transition(State::HOME, now); //IDLE
+    return;
+  }
+
+  if (now < _backNextMs) return;
+
+  const auto& s  = _logger->sampleAt((size_t)_backIdx);
+  const auto& sp = _logger->sampleAt((size_t)(_backIdx - 1));
+
+  int32_t dtMs = (int32_t)s.tMs - (int32_t)sp.tMs;
+  if (dtMs < 1) dtMs = (int32_t)_cfg.periodMs;
+  float dt = dtMs / 1000.0f;
+
+  // Zadane prędkości do odtworzenia wstecz (m/s)
+  float vL_ref = fabsf(s.vL) * _cfg.backSpeedScale;  // zamiast fabsf() byl -
+  float vR_ref = fabsf(s.vR) * _cfg.backSpeedScale;  // zamiast fabsf() byl -
+
+  // Martwa strefa prędkości
+  if (fabsf(vL_ref) < _cfg.backStopEps_mps) vL_ref = 0.0f;
+  if (fabsf(vR_ref) < _cfg.backStopEps_mps) vR_ref = 0.0f;
+
+  // Błędy prędkości (m/s)
+  float eL = vL_ref - _measVL;
+  float eR = vR_ref - _measVR;
+
+  // PI (opcjonalnie)
+  if (_cfg.backKi > 0.0f) {
+    _iErrL += eL * dt;
+    _iErrR += eR * dt;
+
+    // anty-windup (ogranicz całkę)
+    const float iMax = 0.5f; // do strojenia
+    if (_iErrL >  iMax) _iErrL =  iMax;
+    if (_iErrL < -iMax) _iErrL = -iMax;
+    if (_iErrR >  iMax) _iErrR =  iMax;
+    if (_iErrR < -iMax) _iErrR = -iMax;
+  }
+
+  float uL = _cfg.backKp * eL + _cfg.backKi * _iErrL;
+  float uR = _cfg.backKp * eR + _cfg.backKi * _iErrR;
+
+  int pwmL = (int)lroundf(uL);
+  int pwmR = (int)lroundf(uR);
+
+  // Jeśli chcemy jechać, ale regulator daje za mało PWM -> „kop” minimalny
+  if (vL_ref != 0.0f && abs(pwmL) < _cfg.backPwmMinMove) pwmL = (pwmL >= 0) ? _cfg.backPwmMinMove : -_cfg.backPwmMinMove;
+  if (vR_ref != 0.0f && abs(pwmR) < _cfg.backPwmMinMove) pwmR = (pwmR >= 0) ? _cfg.backPwmMinMove : -_cfg.backPwmMinMove;
+
+  // Limit
+  if (pwmL >  _cfg.backPwmMax) pwmL =  _cfg.backPwmMax;
+  if (pwmL < -_cfg.backPwmMax) pwmL = -_cfg.backPwmMax;
+  if (pwmR >  _cfg.backPwmMax) pwmR =  _cfg.backPwmMax;
+  if (pwmR < -_cfg.backPwmMax) pwmR = -_cfg.backPwmMax;
+
+  _motors->setBoth(pwmL, pwmR);
+
+  // debug (tak jak miałeś)
+  if (_cfg.dbgPeriodMs && (now - _lastDbgMs > _cfg.dbgPeriodMs)) {
+    _lastDbgMs = now;
+    Serial.print("[BACK] idx="); Serial.print(_backIdx);
+    Serial.print(" dt="); Serial.print(dtMs);
+    Serial.print(" vRefL="); Serial.print(vL_ref, 3);
+    Serial.print(" vMeasL="); Serial.print(_measVL, 3);
+    Serial.print(" pwmL="); Serial.print(pwmL);
+    Serial.print(" | vRefR="); Serial.print(vR_ref, 3);
+    Serial.print(" vMeasR="); Serial.print(_measVR, 3);
+    Serial.print(" pwmR="); Serial.println(pwmR);
+  }
+
+  _backNextMs = now + (uint32_t)dtMs;
+  _backIdx--;
+}
+
+void Fsm::stepHome(uint32_t now) {
+  (void)now;
+
+  // robot w bazie: ma stać i nie reagować na nic
+  _motors->stop(false);
+
+  // celowo brak transition() i brak logiki detekcji/timerów
 }

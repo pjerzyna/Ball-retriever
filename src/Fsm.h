@@ -3,10 +3,11 @@
 
 class Motors;
 class Detection;
+class TelemetryLogger;
 
 class Fsm {
 public:
-  enum class State : uint8_t { IDLE, CHASE, CAPTURED };
+  enum class State : uint8_t { IDLE, CHASE, CAPTURED, BACK, HOME };
 
   struct Config {
     // detekcja / przejścia
@@ -37,15 +38,34 @@ public:
     // IDLE -> CAPTURED (po czasie)
     uint32_t idleToCapturedMs = 1200;   // np. 1.2s w IDLE => CAPTURED
     bool     idleCapturedRequiresChase = true; // bezpiecznik
+
+    // BACK (odtwarzanie)
+    uint32_t backMaxMs = 8000;     // bezpiecznik: maksymalny czas powrotu
+    float    backSpeedScale = 0.3f; // skalowanie prędkości z logu (np. 0.9 jeśli za szybko)
+    float    backMinAbsSpeed = 0.0f; // jeśli chcesz "martwą strefę" na bardzo małe prędkości
+    uint32_t periodMs = 50;         // okres logowania w ms
+    int backMaxPwm = 200;
+    int backDeadbandPwm = 10;
+
+    // BACK speed control (m/s -> PWM)
+    float backKp = 1500.0f;      // PWM per (m/s) - startowo
+    float backKi = 0.0f;         // jeśli chcesz PI (np. 200..600)
+    int   backPwmMax = 200;      // ogranicz, żeby nie wystrzeliło
+    int   backPwmMinMove = 80;   // minimalny PWM żeby ruszyć (tarcie statyczne)
+    float backStopEps_mps = 0.02f; // poniżej tej prędkości uznajemy 0
+
+
   };
 
   Fsm() = default;
 
-  void begin(Motors& motors, Detection& detection, const Config& cfg);
+  void begin(Motors& motors, Detection& detection, TelemetryLogger& logger, const Config& cfg);
   void setState(State s);
   State state() const { return _state; }
 
   void update(uint32_t now);
+  void setMeasuredWheelV(float vL_mps, float vR_mps) { _measVL = vL_mps; _measVR = vR_mps; }
+
 
 private:
   void stepIdle(uint32_t now);
@@ -53,6 +73,10 @@ private:
   void stepCaptured(uint32_t now);
 
   void transition(State next, uint32_t now);
+
+  void stepBack(uint32_t now);
+
+  void stepHome(uint32_t now);
 
 private:
   Motors*    _motors = nullptr;
@@ -75,4 +99,15 @@ private:
   // IDLE timer + "armed" flag
   uint32_t _idleSinceMs = 0;
   bool     _armedCaptured = false;   // ustawiane po "realnym" CHASE
+
+  // BACK state
+  TelemetryLogger* _logger = nullptr;
+
+  int32_t  _backIdx = -1;          // indeks aktualnej próbki (idziemy w dół)
+  uint32_t _backNextMs = 0;        // kiedy przejść do kolejnej próbki
+  uint32_t _backStartedMs = 0;     // czas wejścia do BACK (bezpiecznik)
+  bool     _wasChasing = false;    // żeby nie wchodzić w BACK bez "realnego" CHASE
+  bool _backActive = false;
+  float _measVL = 0.0f, _measVR = 0.0f; // m/s z enkoderów
+  float _iErrL = 0.0f, _iErrR = 0.0f;   // całka (opcjonalnie)
 };

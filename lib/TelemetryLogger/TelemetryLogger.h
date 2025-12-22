@@ -39,6 +39,13 @@ public:
   // diagnostyka
   size_t samplesCount() const { return _idx; }
   size_t capacity()     const { return _max; }
+
+  // Dostęp do bufora RAM (READ-ONLY)
+  const Sample* buffer() const { return _buf; }
+
+  // Jeśli komuś potrzebne uint16_t (np. FSM)
+  uint16_t samplesCountU16() const { return (uint16_t)_idx; }
+
   
   const Sample& sampleAt(size_t i) const { return _buf[i]; }
 
