@@ -1,7 +1,7 @@
 #include "LogConsole.h"
-#include "TelemetryLogger.h"
+#include "DataLogger.h"
 
-void LogConsole::begin(const Config& cfg, TelemetryLogger& logger, Stream& io) {
+void LogConsole::begin(const Config& cfg, DataLogger& logger, Stream& io) {
   _cfg = cfg;
   _logger = &logger;
   _io = &io;

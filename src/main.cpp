@@ -2,17 +2,16 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <Arduino.h>
-#include "img_converters.h"   // for deletion
 #include "board_config.h"
 #include <ImuMPU.h>
 #include <Motors.h>
 #include <Servo360.h>
 #include <TofVL53.h>
 #include <Encoders.h>
-#include "Detection.h"         // change names
-#include <TelemetryLogger.h>   // new name - DataLogger!!!
+#include <Detection.h>     
+#include <DataLogger.h>
 #include <LogConsole.h>
-#include "Fsm.h"
+#include <Fsm.h>
 
 
 #define ENABLE_PERIPHERALS 1
@@ -106,7 +105,7 @@ static float    derrFilt    = 0.0f;
 // ===============================================
 // Data Logging (encoders + IMU)
 // ===============================================
-TelemetryLogger logger;
+DataLogger logger;
 LogConsole console;
 
 const int BTN_PIN = 0;   // BOOT/B button to manually save data
@@ -126,7 +125,7 @@ void setup() {
 
   #if ENABLE_SAVING_DATA
   // --- Data Logging ---
-  TelemetryLogger::Config lcfg;
+  DataLogger::Config lcfg;
   lcfg.periodMs = 50;           // LOG_PERIOD_MS    logging every 50ms = 20Hz
   lcfg.maxSamples = 1000;       // LOG_SAMPLES_MAX  ~40 kB RAM
   bool ok = logger.begin(lcfg);
@@ -260,7 +259,7 @@ void setup() {
   fcfg.dbgPeriodMs      = 200;
 
   fsm.begin(motors, detection, logger, fcfg);
-  fsm.setState(Fsm::State::IDLE);   // start from IDLE
+  fsm.setState(Fsm::State::IDLE);         // start from IDLE
 
 
   // --- WiFi + camera server ---

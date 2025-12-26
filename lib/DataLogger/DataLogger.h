@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 
-class TelemetryLogger {
+class DataLogger {
 public:
   struct Sample {
     uint32_t tMs;

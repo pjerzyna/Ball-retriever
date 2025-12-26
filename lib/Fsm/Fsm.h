@@ -3,7 +3,7 @@
 
 class Motors;
 class Detection;
-class TelemetryLogger;
+class DataLogger;
 
 class Fsm {
 public:
@@ -59,7 +59,7 @@ public:
 
   Fsm() = default;
 
-  void begin(Motors& motors, Detection& detection, TelemetryLogger& logger, const Config& cfg);
+  void begin(Motors& motors, Detection& detection, DataLogger& logger, const Config& cfg);
   void setState(State s);
   State state() const { return _state; }
 
@@ -101,7 +101,7 @@ private:
   bool     _armedCaptured = false;   // setting after "real" CHASE
 
   // BACK state
-  TelemetryLogger* _logger = nullptr;
+  DataLogger* _logger = nullptr;
 
   int32_t  _backIdx = -1;          // actual sample index (we are counting down)
   uint32_t _backNextMs = 0;        // when next sample should be processed

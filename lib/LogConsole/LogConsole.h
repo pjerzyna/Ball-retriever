@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-class TelemetryLogger;
+class DataLogger;
 
 class LogConsole {
 public:
@@ -10,12 +10,12 @@ public:
     // uint32_t debounceMs = 30;
   };
 
-  void begin(const Config& cfg, TelemetryLogger& logger, Stream& io);
+  void begin(const Config& cfg, DataLogger& logger, Stream& io);
   void update();
 
 private:
   Config _cfg{};
-  TelemetryLogger* _logger = nullptr;
+  DataLogger* _logger = nullptr;
   Stream* _io = nullptr;
 
   bool _lastRawBtn = true;    

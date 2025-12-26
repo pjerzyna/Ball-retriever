@@ -1,4 +1,4 @@
-#include "TelemetryLogger.h"
+#include "DataLogger.h"
 
 // local helper
 static void printFileFromFlashImpl(Stream& out, bool fsOk, const String& path) {
@@ -13,7 +13,7 @@ static void printFileFromFlashImpl(Stream& out, bool fsOk, const String& path) {
   f.close();
 }
 
-bool TelemetryLogger::begin(const Config& cfg) {
+bool DataLogger::begin(const Config& cfg) {
   _cfg = cfg;
 
   // RAM buffer
@@ -43,21 +43,21 @@ bool TelemetryLogger::begin(const Config& cfg) {
   return _fsOk;
 }
 
-void TelemetryLogger::start() {
+void DataLogger::start() {
   _idx = 0;
   _lastMs = 0;
   _active = true;
 }
 
-void TelemetryLogger::stop() {
+void DataLogger::stop() {
   _active = false;
 }
 
-bool TelemetryLogger::isActive() const {
+bool DataLogger::isActive() const {
   return _active;
 }
 
-void TelemetryLogger::tick(uint32_t nowMs,
+void DataLogger::tick(uint32_t nowMs,
                            float ax_g, float ay_g, float az_g,
                            float gz_dps,
                            uint32_t pL, uint32_t pR,
@@ -83,7 +83,7 @@ void TelemetryLogger::tick(uint32_t nowMs,
 }
 
 // new logs unique names
-String TelemetryLogger::makeLogPath() {
+String DataLogger::makeLogPath() {
   int id = 0;
 
   File root = LittleFS.open("/");
@@ -107,7 +107,7 @@ String TelemetryLogger::makeLogPath() {
 }
 
 // "s" command or manual save
-bool TelemetryLogger::saveToFlash() {
+bool DataLogger::saveToFlash() {
   if (!_fsOk) return false;
   if (!_buf) return false;
 
@@ -130,7 +130,7 @@ bool TelemetryLogger::saveToFlash() {
 }
 
 // "l" command
-void TelemetryLogger::listLogs(Stream& out) {
+void DataLogger::listLogs(Stream& out) {
   if (!_fsOk) { out.println("ERR: LittleFS not mounted"); return; }
 
   File root = LittleFS.open("/");
@@ -148,7 +148,7 @@ void TelemetryLogger::listLogs(Stream& out) {
 }
 
 // "A" command
-void TelemetryLogger::dumpAllLogs(Stream& out) {
+void DataLogger::dumpAllLogs(Stream& out) {
   if (!_fsOk) { out.println("ERR: LittleFS not mounted"); return; }
 
   File root = LittleFS.open("/");
@@ -174,7 +174,7 @@ void TelemetryLogger::dumpAllLogs(Stream& out) {
 }
 
 // "x" command
-void TelemetryLogger::eraseAllLogs(Stream& out) {
+void DataLogger::eraseAllLogs(Stream& out) {
   if (!_fsOk) { out.println("ERR: LittleFS not mounted"); return; }
 
   File root = LittleFS.open("/");
