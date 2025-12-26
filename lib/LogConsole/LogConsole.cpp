@@ -17,9 +17,9 @@ void LogConsole::begin(const Config& cfg, TelemetryLogger& logger, Stream& io) {
 void LogConsole::update() {
   if (!_logger || !_io) return;
 
-  // // =========================
-  // // Button: edge + debounce
-  // // =========================
+  // =========================
+  // Button: (edge + debounce) - system better works without this mechanism
+  // =========================
   // if (_cfg.useButton) {
   //   bool raw = digitalRead(_cfg.btnPin);
 
@@ -65,7 +65,7 @@ void LogConsole::update() {
   while (_io->available()) {
     char c = (char)_io->read();
 
-    // Serial Monitor często wysyła CR/LF
+    // Serial Monitor could send CR/LF
     if (c == '\n' || c == '\r') continue;
 
     switch (c) {

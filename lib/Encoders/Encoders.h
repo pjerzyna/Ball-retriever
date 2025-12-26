@@ -35,10 +35,9 @@ public:
   uint32_t pulsesL() const { return _pulsesL; }
   uint32_t pulsesR() const { return _pulsesR; }
 
+  // to deletion
   //uint32_t totalL() const { return _totalL; }
   //uint32_t totalR() const { return _totalR; }
-
-  // NOWE
   bool hasNewSample() const { return _newSample; }
   void clearNewSampleFlag() { _newSample = false; }
   //

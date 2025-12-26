@@ -20,7 +20,7 @@ bool TelemetryLogger::begin(const Config& cfg) {
   _max = _cfg.maxSamples;
   if (_max == 0) _max = 1;
 
-  // jeśli ktoś przypadkiem zawoła begin() drugi raz
+  // safety mechanism
   if (_buf) {
     delete[] _buf;
     _buf = nullptr;
@@ -39,7 +39,7 @@ bool TelemetryLogger::begin(const Config& cfg) {
   _lastMs = 0;
   _active = _cfg.autoStart;
 
-  _fsOk = LittleFS.begin(false); // false = nie formatuj automatycznie
+  _fsOk = LittleFS.begin(false); // false = do not format automatically
   return _fsOk;
 }
 
@@ -82,7 +82,7 @@ void TelemetryLogger::tick(uint32_t nowMs,
   s.vR = vR;
 }
 
-// unikalne nazywanie nowych logow
+// new logs unique names
 String TelemetryLogger::makeLogPath() {
   int id = 0;
 
@@ -106,6 +106,7 @@ String TelemetryLogger::makeLogPath() {
   return String(buf);
 }
 
+// "s" command or manual save
 bool TelemetryLogger::saveToFlash() {
   if (!_fsOk) return false;
   if (!_buf) return false;
@@ -128,6 +129,7 @@ bool TelemetryLogger::saveToFlash() {
   return true;
 }
 
+// "l" command
 void TelemetryLogger::listLogs(Stream& out) {
   if (!_fsOk) { out.println("ERR: LittleFS not mounted"); return; }
 
@@ -145,6 +147,7 @@ void TelemetryLogger::listLogs(Stream& out) {
   out.println("===FILES_END===");
 }
 
+// "A" command
 void TelemetryLogger::dumpAllLogs(Stream& out) {
   if (!_fsOk) { out.println("ERR: LittleFS not mounted"); return; }
 
@@ -170,6 +173,7 @@ void TelemetryLogger::dumpAllLogs(Stream& out) {
   out.println("===ALL_DONE===");
 }
 
+// "x" command
 void TelemetryLogger::eraseAllLogs(Stream& out) {
   if (!_fsOk) { out.println("ERR: LittleFS not mounted"); return; }
 

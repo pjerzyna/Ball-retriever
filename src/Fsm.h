@@ -7,14 +7,14 @@ class TelemetryLogger;
 
 class Fsm {
 public:
-  enum class State : uint8_t { IDLE, CHASE, CAPTURED, BACK, HOME };
+  enum class State : uint8_t { IDLE, CHASE, CAPTURED, RETURN, HOME };
 
   struct Config {
-    // detekcja / przejścia
+    // detection / transitions
     float    minConfidence = 0.4f;
     uint32_t holdMs        = 300;
 
-    // parametry obrazu / kalibracja
+    // image parameters / callibration
     int      nnWidth       = 96;
     float    calibCenterX  = 52.0f;
     uint16_t targetWidth   = 20;
@@ -26,7 +26,7 @@ public:
     float alphaErr = 0.6f;
     float alphaD   = 0.4f;
 
-    // jazda
+    // drive
     int driveSpeed     = 120;
     int driveBaseSpeed = 80;
     int driveMaxSpeed  = 200;
@@ -35,24 +35,24 @@ public:
     bool     printTransitions = true;
     uint32_t dbgPeriodMs      = 200;
 
-    // IDLE -> CAPTURED (po czasie)
-    uint32_t idleToCapturedMs = 1200;   // np. 1.2s w IDLE => CAPTURED
-    bool     idleCapturedRequiresChase = true; // bezpiecznik
+    // IDLE -> CAPTURED (after some time)
+    uint32_t idleToCapturedMs = 1200;   // 1.2s IDLE => CAPTURED
+    bool     idleCapturedRequiresChase = true; // safety
 
-    // BACK (odtwarzanie)
-    uint32_t backMaxMs = 8000;     // bezpiecznik: maksymalny czas powrotu
-    float    backSpeedScale = 0.3f; // skalowanie prędkości z logu (np. 0.9 jeśli za szybko)
-    float    backMinAbsSpeed = 0.0f; // jeśli chcesz "martwą strefę" na bardzo małe prędkości
-    uint32_t periodMs = 50;         // okres logowania w ms
+    // RETURN (reproduction of logged path)
+    uint32_t backMaxMs = 8000;     // safety: max return time
+    float    backSpeedScale = 0.3f; // velocity scaling from log 
+    float    backMinAbsSpeed = 0.0f; // dead band for very small velocities
+    uint32_t periodMs = 50;         // logging period (for correct indexing)
     int backMaxPwm = 200;
     int backDeadbandPwm = 10;
 
-    // BACK speed control (m/s -> PWM)
-    float backKp = 1500.0f;      // PWM per (m/s) - startowo
-    float backKi = 0.0f;         // jeśli chcesz PI (np. 200..600)
-    int   backPwmMax = 200;      // ogranicz, żeby nie wystrzeliło
-    int   backPwmMinMove = 80;   // minimalny PWM żeby ruszyć (tarcie statyczne)
-    float backStopEps_mps = 0.02f; // poniżej tej prędkości uznajemy 0
+    // RETURN speed control (m/s -> PWM)
+    float backKp = 1500.0f;        // PWM per (m/s)
+    float backKi = 250.0f;         // integral part
+    int   backPwmMax = 200;        // max PWM
+    int   backPwmMinMove = 80;     // min PWM 
+    float backStopEps_mps = 0.02f; // below this speed we consider it zero
 
 
   };
@@ -98,16 +98,16 @@ private:
 
   // IDLE timer + "armed" flag
   uint32_t _idleSinceMs = 0;
-  bool     _armedCaptured = false;   // ustawiane po "realnym" CHASE
+  bool     _armedCaptured = false;   // setting after "real" CHASE
 
   // BACK state
   TelemetryLogger* _logger = nullptr;
 
-  int32_t  _backIdx = -1;          // indeks aktualnej próbki (idziemy w dół)
-  uint32_t _backNextMs = 0;        // kiedy przejść do kolejnej próbki
-  uint32_t _backStartedMs = 0;     // czas wejścia do BACK (bezpiecznik)
-  bool     _wasChasing = false;    // żeby nie wchodzić w BACK bez "realnego" CHASE
+  int32_t  _backIdx = -1;          // actual sample index (we are counting down)
+  uint32_t _backNextMs = 0;        // when next sample should be processed
+  uint32_t _backStartedMs = 0;     // time of starting BACK
+  bool     _wasChasing = false;    // in case we never chased, do not BACK
   bool _backActive = false;
-  float _measVL = 0.0f, _measVR = 0.0f; // m/s z enkoderów
-  float _iErrL = 0.0f, _iErrR = 0.0f;   // całka (opcjonalnie)
+  float _measVL = 0.0f, _measVR = 0.0f; // m/s 
+  float _iErrL = 0.0f, _iErrR = 0.0f;   // integral 
 };

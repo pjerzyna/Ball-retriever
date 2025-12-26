@@ -2,22 +2,22 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <Arduino.h>
-#include "img_converters.h"   //? chyba mozna usunac
+#include "img_converters.h"   // for deletion
 #include "board_config.h"
 #include <ImuMPU.h>
 #include <Motors.h>
 #include <Servo360.h>
 #include <TofVL53.h>
 #include <Encoders.h>
-#include "Detection.h"      //dodac pozniej do bibliotek w /lib
-#include <TelemetryLogger.h>
+#include "Detection.h"         // change names
+#include <TelemetryLogger.h>   // new name - DataLogger!!!
 #include <LogConsole.h>
 #include "Fsm.h"
 
 
 #define ENABLE_PERIPHERALS 1
 #define ENABLE_STREAM 0
-// zapisywania danych uzywac tylko wtedy kiedy wylaczony jest stream, bo inaczej robocik nie wyrabia
+// use data saving only when the stream is turned on, otherwise the robot will struggle with performance
 #define ENABLE_SAVING_DATA 1 // means enable coming back with a captured item
 
 // ===========================
@@ -127,8 +127,8 @@ void setup() {
   #if ENABLE_SAVING_DATA
   // --- Data Logging ---
   TelemetryLogger::Config lcfg;
-  lcfg.periodMs = 50;           // LOG_PERIOD_MS    logowanie co 50ms = 20Hz
-  lcfg.maxSamples = 1000;       // LOG_SAMPLES_MAX  ~40 kB RAM (mam 93kB wolnego RAMu)
+  lcfg.periodMs = 50;           // LOG_PERIOD_MS    logging every 50ms = 20Hz
+  lcfg.maxSamples = 1000;       // LOG_SAMPLES_MAX  ~40 kB RAM
   bool ok = logger.begin(lcfg);
   Serial.println(ok ? "LittleFS ready" : "LittleFS mount failed");
 
@@ -149,7 +149,7 @@ void setup() {
   mpins.pwmB = pwmB; mpins.in1B = in1B; mpins.in2B = in2B;
   mpins.chA = 4;     mpins.chB = 5;
   motors.begin(mpins, freq, res);
-  motors.setScale(1.0f, 1.0f);  //1.0f, 0.93f
+  motors.setScale(1.0f, 0.93f);  //1.0f, 0.93f
   delay(100);
 
   // --- I2C sensors initialization on GPIO5/6 (Camera has its own SCCB on 39/40) ---
@@ -205,9 +205,9 @@ void setup() {
   config.pixel_format = PIXFORMAT_RGB565;
   config.frame_size = FRAMESIZE_240X240;
 
-  config.grab_mode = CAMERA_GRAB_LATEST; //CAMERA_GRAB_WHEN_EMPTY - to jest lżejsze
+  config.grab_mode = CAMERA_GRAB_LATEST;   // CAMERA_GRAB_WHEN_EMPTY - it is lighter
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;             // po co mi to jest??
+  config.jpeg_quality = 12;                // stream setting
   config.fb_count = 1;
 
   // camera init
@@ -244,7 +244,7 @@ void setup() {
 
   fcfg.nnWidth         = EI_CLASSIFIER_INPUT_WIDTH;
   fcfg.calibCenterX    = CALIB_CENTER_X;
-  fcfg.targetWidth     = TARGET_WIDTH; //bezuzyteczne
+  fcfg.targetWidth     = TARGET_WIDTH;      // not used
 
   fcfg.kpTurn          = KP_TURN;
   fcfg.kdErr           = KD_ERR;
@@ -254,13 +254,13 @@ void setup() {
 
   fcfg.driveSpeed      = DRIVE_SPEED;
   fcfg.driveBaseSpeed  = DRIVE_BASE_SPEED;
-  fcfg.driveMaxSpeed   = DRIVE_MAX_SPEED;  //bezuzyteczne chyba
+  fcfg.driveMaxSpeed   = DRIVE_MAX_SPEED;  // not used
 
   fcfg.printTransitions = true;
   fcfg.dbgPeriodMs      = 200;
 
   fsm.begin(motors, detection, logger, fcfg);
-  fsm.setState(Fsm::State::IDLE);   // start bezpiecznie od IDLE
+  fsm.setState(Fsm::State::IDLE);   // start from IDLE
 
 
   // --- WiFi + camera server ---

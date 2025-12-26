@@ -1,5 +1,7 @@
 #include "Servo360.h"
 
+// --- Servo is not used in this project ---
+
 bool Servo360::begin(int pin, int stopUs, int minUs, int maxUs) {
   _pin = pin;
   _stopUs = stopUs;

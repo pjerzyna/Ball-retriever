@@ -48,7 +48,7 @@ void Fsm::update(uint32_t now) {
         (_state == State::IDLE)     ? "IDLE" :
         (_state == State::CHASE)    ? "CHASE" :
         (_state == State::CAPTURED) ? "CAPTURED" : 
-        (_state == State::BACK)     ? "BACK" : 
+        (_state == State::RETURN)     ? "RETURN" :  //podmienic na RETURN
         (_state == State::HOME)     ? "HOME" : "?";
       Serial.print("[FSM] -> ");
       Serial.print(name);
@@ -68,7 +68,7 @@ void Fsm::update(uint32_t now) {
     case State::IDLE:     stepIdle(now);     break;
     case State::CHASE:    stepChase(now);    break;
     case State::CAPTURED: stepCaptured(now); break;
-    case State::BACK:     stepBack(now);     break;
+    case State::RETURN:     stepBack(now);     break;
     case State::HOME:     stepHome(now);     break;
   }
 }
@@ -203,7 +203,7 @@ void Fsm::stepCaptured(uint32_t now) {
 
   _backActive = true; //bezpiecznik
 
-  transition(State::BACK, now);
+  transition(State::RETURN, now);
 }
 
 
