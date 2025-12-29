@@ -16,7 +16,7 @@
 
 #define ENABLE_PERIPHERALS 1
 #define ENABLE_STREAM 0
-// use data saving only when the stream is turned on, otherwise the robot will struggle with performance
+// use data saving only when the stream is turned off, otherwise the robot will struggle with performance
 #define ENABLE_SAVING_DATA 1 // means enable coming back with a captured item
 
 // ===========================
@@ -204,7 +204,7 @@ void setup() {
   config.pixel_format = PIXFORMAT_RGB565;
   config.frame_size = FRAMESIZE_240X240;
 
-  config.grab_mode = CAMERA_GRAB_LATEST;   // CAMERA_GRAB_WHEN_EMPTY - it is lighter
+  config.grab_mode = CAMERA_GRAB_LATEST;   // CAMERA_GRAB_WHEN_EMPTY - lighter version
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 12;                // stream setting
   config.fb_count = 1;
